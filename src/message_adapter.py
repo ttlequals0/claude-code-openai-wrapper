@@ -2,6 +2,9 @@ from typing import List, Optional, Dict, Any
 from src.models import Message
 import re
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class MessageAdapter:
@@ -31,6 +34,7 @@ class MessageAdapter:
             Extracted JSON string, or None if no valid JSON found
         """
         if not content:
+            logger.debug("extract_json: Empty content")
             return None
 
         content = content.strip()
@@ -38,6 +42,7 @@ class MessageAdapter:
         # Case 1: Try parsing as pure JSON first
         try:
             json.loads(content)
+            logger.debug(f"extract_json: Already valid JSON ({len(content)} chars)")
             return content
         except json.JSONDecodeError:
             pass
@@ -55,8 +60,10 @@ class MessageAdapter:
                 match = match.strip()
                 try:
                     json.loads(match)
+                    logger.debug(f"extract_json: Extracted from code block ({len(match)} chars)")
                     return match
                 except json.JSONDecodeError:
+                    logger.debug("extract_json: Code block match failed validation")
                     continue
 
         # Case 3: Find embedded JSON (objects or arrays)
@@ -66,6 +73,7 @@ class MessageAdapter:
             candidate = match.group()
             try:
                 json.loads(candidate)
+                logger.debug(f"extract_json: Extracted embedded object ({len(candidate)} chars)")
                 return candidate
             except json.JSONDecodeError:
                 continue
@@ -76,6 +84,7 @@ class MessageAdapter:
             candidate = match.group()
             try:
                 json.loads(candidate)
+                logger.debug(f"extract_json: Extracted embedded array ({len(candidate)} chars)")
                 return candidate
             except json.JSONDecodeError:
                 continue
@@ -88,6 +97,7 @@ class MessageAdapter:
             candidate = content[first_brace : last_brace + 1]
             try:
                 json.loads(candidate)
+                logger.debug(f"extract_json: Extracted via brace matching ({len(candidate)} chars)")
                 return candidate
             except json.JSONDecodeError:
                 pass
@@ -99,10 +109,13 @@ class MessageAdapter:
             candidate = content[first_bracket : last_bracket + 1]
             try:
                 json.loads(candidate)
+                logger.debug(f"extract_json: Extracted via bracket matching ({len(candidate)} chars)")
                 return candidate
             except json.JSONDecodeError:
                 pass
 
+        logger.warning(f"extract_json: No valid JSON found in {len(content)} chars")
+        logger.debug(f"extract_json: Content preview: {content[:500] if len(content) > 500 else content}")
         return None
 
     @staticmethod
@@ -120,8 +133,10 @@ class MessageAdapter:
         extracted = MessageAdapter.extract_json(content)
 
         if extracted:
+            logger.debug(f"enforce_json_format: Successfully extracted ({len(extracted)} chars)")
             return extracted
 
+        logger.warning(f"enforce_json_format: Extraction failed, strict={strict}")
         if strict:
             return "[]"
 

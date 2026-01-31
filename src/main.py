@@ -801,9 +801,16 @@ async def chat_completions(
 
             # Enforce JSON format if JSON mode is enabled
             if json_mode:
+                original_len = len(assistant_content)
+                original_preview = assistant_content[:200] if len(assistant_content) > 200 else assistant_content
+
                 assistant_content = MessageAdapter.enforce_json_format(
                     assistant_content, strict=True
                 )
+
+                logger.info(f"JSON enforcement: {original_len} chars -> {len(assistant_content)} chars")
+                logger.debug(f"Before enforce_json: {original_preview}...")
+                logger.debug(f"After enforce_json: {assistant_content[:500] if len(assistant_content) > 500 else assistant_content}")
 
             # Add assistant response to session if using session mode
             if actual_session_id:
