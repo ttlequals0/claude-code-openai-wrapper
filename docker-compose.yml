@@ -1,16 +1,34 @@
-version: '3'
+version: '3.8'
 services:
   claude-wrapper:
-    build: .
+    image: ttlequals0/claude-code-openai-wrapper:latest
+    container_name: claude-wrapper
     ports:
       - "8000:8000"
     volumes:
+      # Mount Claude CLI credentials
       - ~/.claude:/root/.claude
       # Optional: Mount a specific workspace directory
-      # Uncomment and modify the line below to use a custom workspace
       # - ./workspace:/workspace
     environment:
       - PORT=8000
+      - MAX_TIMEOUT=600000
+      # Authentication (choose one method):
+      # Option 1: Direct API key (recommended)
+      # - ANTHROPIC_API_KEY=your-api-key
+      # Option 2: Explicit auth method selection
+      # - CLAUDE_AUTH_METHOD=cli  # Options: cli, api_key, bedrock, vertex
       # Optional: Set Claude's working directory (defaults to isolated temp dir)
-      # Uncomment and modify the line below to set a custom working directory
       # - CLAUDE_CWD=/workspace
+      # Optional: Enable debug logging
+      # - DEBUG_MODE=true
+      # Optional: Rate limiting configuration
+      # - RATE_LIMIT_ENABLED=true
+      # - RATE_LIMIT_CHAT_PER_MINUTE=10
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

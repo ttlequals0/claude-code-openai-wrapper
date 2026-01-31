@@ -1,10 +1,131 @@
 from typing import List, Optional, Dict, Any
 from src.models import Message
 import re
+import json
 
 
 class MessageAdapter:
     """Converts between OpenAI message format and Claude Code prompts."""
+
+    # Instruction to prepend to system prompt for JSON mode
+    JSON_MODE_INSTRUCTION = (
+        "CRITICAL: Respond with ONLY valid JSON. "
+        "No explanations, no markdown, no code blocks. "
+        "Start with [ or { and end with ] or }."
+    )
+
+    @staticmethod
+    def extract_json(content: str) -> Optional[str]:
+        """
+        Extract JSON from content.
+
+        Handles:
+        1. Pure JSON (content is already valid JSON)
+        2. Markdown code blocks (```json ... ```)
+        3. Embedded JSON (JSON within other text)
+
+        Args:
+            content: The content to extract JSON from
+
+        Returns:
+            Extracted JSON string, or None if no valid JSON found
+        """
+        if not content:
+            return None
+
+        content = content.strip()
+
+        # Case 1: Try parsing as pure JSON first
+        try:
+            json.loads(content)
+            return content
+        except json.JSONDecodeError:
+            pass
+
+        # Case 2: Extract from markdown code blocks
+        # Match ```json ... ``` or ``` ... ```
+        code_block_patterns = [
+            r"```json\s*([\s\S]*?)\s*```",  # ```json block
+            r"```\s*([\s\S]*?)\s*```",  # generic ``` block
+        ]
+
+        for pattern in code_block_patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            for match in matches:
+                match = match.strip()
+                try:
+                    json.loads(match)
+                    return match
+                except json.JSONDecodeError:
+                    continue
+
+        # Case 3: Find embedded JSON (objects or arrays)
+        # Look for JSON objects {...}
+        object_pattern = r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}"
+        for match in re.finditer(object_pattern, content):
+            candidate = match.group()
+            try:
+                json.loads(candidate)
+                return candidate
+            except json.JSONDecodeError:
+                continue
+
+        # Look for JSON arrays [...]
+        array_pattern = r"\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\]"
+        for match in re.finditer(array_pattern, content):
+            candidate = match.group()
+            try:
+                json.loads(candidate)
+                return candidate
+            except json.JSONDecodeError:
+                continue
+
+        # Try more aggressive nested JSON extraction for complex objects
+        # Find the first { and match to the last }
+        first_brace = content.find("{")
+        last_brace = content.rfind("}")
+        if first_brace != -1 and last_brace > first_brace:
+            candidate = content[first_brace : last_brace + 1]
+            try:
+                json.loads(candidate)
+                return candidate
+            except json.JSONDecodeError:
+                pass
+
+        # Try for arrays
+        first_bracket = content.find("[")
+        last_bracket = content.rfind("]")
+        if first_bracket != -1 and last_bracket > first_bracket:
+            candidate = content[first_bracket : last_bracket + 1]
+            try:
+                json.loads(candidate)
+                return candidate
+            except json.JSONDecodeError:
+                pass
+
+        return None
+
+    @staticmethod
+    def enforce_json_format(content: str, strict: bool = False) -> str:
+        """
+        Enforce JSON format on content.
+
+        Args:
+            content: The content to enforce JSON format on
+            strict: If True, return '[]' on failure. If False, return original content.
+
+        Returns:
+            Valid JSON string, or fallback value based on strict mode
+        """
+        extracted = MessageAdapter.extract_json(content)
+
+        if extracted:
+            return extracted
+
+        if strict:
+            return "[]"
+
+        return content
 
     @staticmethod
     def messages_to_prompt(messages: List[Message]) -> tuple[str, Optional[str]]:
