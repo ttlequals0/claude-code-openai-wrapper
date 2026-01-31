@@ -12,17 +12,19 @@ class MessageAdapter:
 
     # Instruction to prepend to system prompt for JSON mode
     JSON_MODE_INSTRUCTION = (
-        "CRITICAL: Respond with ONLY valid JSON. "
-        "No explanations, no markdown, no code blocks. "
-        "Start with [ or { and end with ] or }."
+        "CRITICAL: Your response must be ONLY valid JSON. "
+        "The very first character of your response must be [ or {. "
+        "The very last character of your response must be ] or }. "
+        "Do NOT wrap in markdown code blocks. "
+        "Do NOT use ``` anywhere in your response."
     )
 
     # Suffix to append to user prompt to reinforce JSON mode
     JSON_PROMPT_SUFFIX = (
         "\n\n---\n"
-        "OUTPUT INSTRUCTION: Your entire response must be valid JSON. "
-        "Start with [ or { and end with ] or }. "
-        "Do not include any other text, explanation, or markdown."
+        "OUTPUT FORMAT: Raw JSON only. "
+        "First character: [ or {. Last character: ] or }. "
+        "No markdown, no code fences, no explanation."
     )
 
     @staticmethod

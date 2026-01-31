@@ -70,6 +70,20 @@ logger = logging.getLogger(__name__)
 runtime_api_key = None
 
 
+def log_json_structure(content: str, log: logging.Logger) -> None:
+    """Log the structure of a JSON response for debugging."""
+    try:
+        data = json.loads(content)
+        if isinstance(data, list):
+            log.debug(f"JSON array with {len(data)} items")
+            if len(data) > 0 and isinstance(data[0], dict):
+                log.debug(f"First item fields: {list(data[0].keys())}")
+        elif isinstance(data, dict):
+            log.debug(f"JSON object fields: {list(data.keys())}")
+    except json.JSONDecodeError:
+        log.debug("Response is not valid JSON")
+
+
 def generate_secure_token(length: int = 32) -> str:
     """Generate a secure random token for API authentication."""
     alphabet = string.ascii_letters + string.digits + "-_"
@@ -582,7 +596,17 @@ async def generate_streaming_response(
 
             # Combine buffered content and enforce JSON format
             combined_content = "".join(json_mode_buffer)
+
+            if DEBUG_MODE or VERBOSE:
+                raw_preview = combined_content[:50] if len(combined_content) > 50 else combined_content
+                raw_end = combined_content[-30:] if len(combined_content) > 30 else combined_content
+                logger.debug(f"Raw response: starts='{raw_preview}' ends='...{raw_end}'")
+
             json_content = MessageAdapter.enforce_json_format(combined_content, strict=True)
+
+            if DEBUG_MODE or VERBOSE:
+                logger.debug(f"Extracted JSON preview: {json_content[:200]}")
+                log_json_structure(json_content, logger)
 
             # Emit as single chunk
             json_chunk = ChatCompletionStreamResponse(
@@ -806,15 +830,21 @@ async def chat_completions(
             # Enforce JSON format if JSON mode is enabled
             if json_mode:
                 original_len = len(assistant_content)
-                original_preview = assistant_content[:200] if len(assistant_content) > 200 else assistant_content
+
+                if DEBUG_MODE or VERBOSE:
+                    raw_preview = assistant_content[:50] if len(assistant_content) > 50 else assistant_content
+                    raw_end = assistant_content[-30:] if len(assistant_content) > 30 else assistant_content
+                    logger.debug(f"Raw response: starts='{raw_preview}' ends='...{raw_end}'")
 
                 assistant_content = MessageAdapter.enforce_json_format(
                     assistant_content, strict=True
                 )
 
                 logger.info(f"JSON enforcement: {original_len} chars -> {len(assistant_content)} chars")
-                logger.debug(f"Before enforce_json: {original_preview}...")
-                logger.debug(f"After enforce_json: {assistant_content[:500] if len(assistant_content) > 500 else assistant_content}")
+
+                if DEBUG_MODE or VERBOSE:
+                    logger.debug(f"Extracted JSON preview: {assistant_content[:200]}")
+                    log_json_structure(assistant_content, logger)
 
             # Add assistant response to session if using session mode
             if actual_session_id:
