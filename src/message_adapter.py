@@ -17,6 +17,14 @@ class MessageAdapter:
         "Start with [ or { and end with ] or }."
     )
 
+    # Suffix to append to user prompt to reinforce JSON mode
+    JSON_PROMPT_SUFFIX = (
+        "\n\n---\n"
+        "OUTPUT INSTRUCTION: Your entire response must be valid JSON. "
+        "Start with [ or { and end with ] or }. "
+        "Do not include any other text, explanation, or markdown."
+    )
+
     @staticmethod
     def extract_json(content: str) -> Optional[str]:
         """

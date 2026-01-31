@@ -425,7 +425,9 @@ async def generate_streaming_response(
                 system_prompt = f"{MessageAdapter.JSON_MODE_INSTRUCTION}\n\n{system_prompt}"
             else:
                 system_prompt = MessageAdapter.JSON_MODE_INSTRUCTION
-            logger.info("JSON mode enabled (streaming) - response will be accumulated and formatted")
+            # Also append to user prompt to reinforce JSON requirement
+            prompt = prompt + MessageAdapter.JSON_PROMPT_SUFFIX
+            logger.info("JSON mode enabled (streaming) - instruction added to system and user prompt")
 
         # Filter content for unsupported features
         prompt = MessageAdapter.filter_content(prompt)
@@ -745,7 +747,9 @@ async def chat_completions(
                     system_prompt = f"{MessageAdapter.JSON_MODE_INSTRUCTION}\n\n{system_prompt}"
                 else:
                     system_prompt = MessageAdapter.JSON_MODE_INSTRUCTION
-                logger.info("JSON mode enabled - response will be enforced as valid JSON")
+                # Also append to user prompt to reinforce JSON requirement
+                prompt = prompt + MessageAdapter.JSON_PROMPT_SUFFIX
+                logger.info("JSON mode enabled - instruction added to system and user prompt")
 
             # Filter content
             prompt = MessageAdapter.filter_content(prompt)
