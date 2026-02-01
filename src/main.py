@@ -52,6 +52,7 @@ from src.rate_limiter import (
     rate_limit_endpoint,
 )
 from src.constants import CLAUDE_MODELS, CLAUDE_TOOLS, DEFAULT_ALLOWED_TOOLS
+from src.model_service import model_service
 
 # Load environment variables
 load_dotenv()
@@ -67,6 +68,20 @@ logger = logging.getLogger(__name__)
 
 # Global variable to store runtime-generated API key
 runtime_api_key = None
+
+
+def log_json_structure(content: str, log: logging.Logger) -> None:
+    """Log the structure of a JSON response for debugging."""
+    try:
+        data = json.loads(content)
+        if isinstance(data, list):
+            log.debug(f"JSON array with {len(data)} items")
+            if len(data) > 0 and isinstance(data[0], dict):
+                log.debug(f"First item fields: {list(data[0].keys())}")
+        elif isinstance(data, dict):
+            log.debug(f"JSON object fields: {list(data.keys())}")
+    except json.JSONDecodeError:
+        log.debug("Response is not valid JSON")
 
 
 def generate_secure_token(length: int = 32) -> str:
@@ -133,6 +148,9 @@ async def lifespan(app: FastAPI):
     """Verify Claude Code authentication and CLI on startup."""
     logger.info("Verifying Claude Code authentication and CLI...")
 
+    # Initialize model service (fetch models from API or use fallback)
+    await model_service.initialize()
+
     # Validate authentication first
     auth_valid, auth_info = validate_claude_code_auth()
 
@@ -196,6 +214,9 @@ async def lifespan(app: FastAPI):
     # Cleanup on shutdown
     logger.info("Shutting down session manager...")
     session_manager.shutdown()
+
+    # Shutdown model service
+    await model_service.shutdown()
 
 
 # Create FastAPI app
@@ -410,6 +431,18 @@ async def generate_streaming_response(
                 system_prompt = sampling_instructions
             logger.debug(f"Added sampling instructions: {sampling_instructions}")
 
+        # Check for JSON mode
+        json_mode = request.response_format and request.response_format.type == "json_object"
+        if json_mode:
+            # Prepend JSON instruction to system prompt
+            if system_prompt:
+                system_prompt = f"{MessageAdapter.JSON_MODE_INSTRUCTION}\n\n{system_prompt}"
+            else:
+                system_prompt = MessageAdapter.JSON_MODE_INSTRUCTION
+            # Also append to user prompt to reinforce JSON requirement
+            prompt = prompt + MessageAdapter.JSON_PROMPT_SUFFIX
+            logger.info("JSON mode enabled (streaming) - instruction added to system and user prompt")
+
         # Filter content for unsupported features
         prompt = MessageAdapter.filter_content(prompt)
         if system_prompt:
@@ -443,6 +476,7 @@ async def generate_streaming_response(
         chunks_buffer = []
         role_sent = False  # Track if we've sent the initial role chunk
         content_sent = False  # Track if we've sent any content
+        json_mode_buffer = []  # Buffer for JSON mode - accumulate all content
 
         async for chunk in claude_cli.run_completion(
             prompt=prompt,
@@ -501,15 +535,42 @@ async def generate_streaming_response(
                         filtered_text = MessageAdapter.filter_content(raw_text)
 
                         if filtered_text and not filtered_text.isspace():
+                            if json_mode:
+                                # In JSON mode, buffer content for later processing
+                                json_mode_buffer.append(filtered_text)
+                            else:
+                                # Create streaming chunk
+                                stream_chunk = ChatCompletionStreamResponse(
+                                    id=request_id,
+                                    model=request.model,
+                                    choices=[
+                                        StreamChoice(
+                                            index=0,
+                                            delta={"content": filtered_text},
+                                            finish_reason=None,
+                                        )
+                                    ],
+                                )
+
+                                yield f"data: {stream_chunk.model_dump_json()}\n\n"
+                                content_sent = True
+
+                elif isinstance(content, str):
+                    # Filter out tool usage and thinking blocks
+                    filtered_content = MessageAdapter.filter_content(content)
+
+                    if filtered_content and not filtered_content.isspace():
+                        if json_mode:
+                            # In JSON mode, buffer content for later processing
+                            json_mode_buffer.append(filtered_content)
+                        else:
                             # Create streaming chunk
                             stream_chunk = ChatCompletionStreamResponse(
                                 id=request_id,
                                 model=request.model,
                                 choices=[
                                     StreamChoice(
-                                        index=0,
-                                        delta={"content": filtered_text},
-                                        finish_reason=None,
+                                        index=0, delta={"content": filtered_content}, finish_reason=None
                                     )
                                 ],
                             )
@@ -517,24 +578,48 @@ async def generate_streaming_response(
                             yield f"data: {stream_chunk.model_dump_json()}\n\n"
                             content_sent = True
 
-                elif isinstance(content, str):
-                    # Filter out tool usage and thinking blocks
-                    filtered_content = MessageAdapter.filter_content(content)
-
-                    if filtered_content and not filtered_content.isspace():
-                        # Create streaming chunk
-                        stream_chunk = ChatCompletionStreamResponse(
-                            id=request_id,
-                            model=request.model,
-                            choices=[
-                                StreamChoice(
-                                    index=0, delta={"content": filtered_content}, finish_reason=None
-                                )
-                            ],
+        # Handle JSON mode: emit accumulated content as single JSON-formatted chunk
+        if json_mode and json_mode_buffer:
+            # Send role chunk first if not sent
+            if not role_sent:
+                initial_chunk = ChatCompletionStreamResponse(
+                    id=request_id,
+                    model=request.model,
+                    choices=[
+                        StreamChoice(
+                            index=0, delta={"role": "assistant", "content": ""}, finish_reason=None
                         )
+                    ],
+                )
+                yield f"data: {initial_chunk.model_dump_json()}\n\n"
+                role_sent = True
 
-                        yield f"data: {stream_chunk.model_dump_json()}\n\n"
-                        content_sent = True
+            # Combine buffered content and enforce JSON format
+            combined_content = "".join(json_mode_buffer)
+
+            if DEBUG_MODE or VERBOSE:
+                raw_preview = combined_content[:50] if len(combined_content) > 50 else combined_content
+                raw_end = combined_content[-30:] if len(combined_content) > 30 else combined_content
+                logger.debug(f"Raw response: starts='{raw_preview}' ends='...{raw_end}'")
+
+            json_content = MessageAdapter.enforce_json_format(combined_content, strict=True)
+
+            if DEBUG_MODE or VERBOSE:
+                logger.debug(f"Extracted JSON preview: {json_content[:200]}")
+                log_json_structure(json_content, logger)
+
+            # Emit as single chunk
+            json_chunk = ChatCompletionStreamResponse(
+                id=request_id,
+                model=request.model,
+                choices=[
+                    StreamChoice(
+                        index=0, delta={"content": json_content}, finish_reason=None
+                    )
+                ],
+            )
+            yield f"data: {json_chunk.model_dump_json()}\n\n"
+            content_sent = True
 
         # Handle case where no role was sent (send at least role chunk)
         if not role_sent:
@@ -553,13 +638,16 @@ async def generate_streaming_response(
 
         # If we sent role but no content, send a minimal response
         if role_sent and not content_sent:
+            fallback_content = (
+                "[]" if json_mode else "I'm unable to provide a response at the moment."
+            )
             fallback_chunk = ChatCompletionStreamResponse(
                 id=request_id,
                 model=request.model,
                 choices=[
                     StreamChoice(
                         index=0,
-                        delta={"content": "I'm unable to provide a response at the moment."},
+                        delta={"content": fallback_content},
                         finish_reason=None,
                     )
                 ],
@@ -672,6 +760,21 @@ async def chat_completions(
                     system_prompt = sampling_instructions
                 logger.debug(f"Added sampling instructions: {sampling_instructions}")
 
+            # Check for JSON mode
+            json_mode = (
+                request_body.response_format
+                and request_body.response_format.type == "json_object"
+            )
+            if json_mode:
+                # Prepend JSON instruction to system prompt
+                if system_prompt:
+                    system_prompt = f"{MessageAdapter.JSON_MODE_INSTRUCTION}\n\n{system_prompt}"
+                else:
+                    system_prompt = MessageAdapter.JSON_MODE_INSTRUCTION
+                # Also append to user prompt to reinforce JSON requirement
+                prompt = prompt + MessageAdapter.JSON_PROMPT_SUFFIX
+                logger.info("JSON mode enabled - instruction added to system and user prompt")
+
             # Filter content
             prompt = MessageAdapter.filter_content(prompt)
             if system_prompt:
@@ -723,6 +826,25 @@ async def chat_completions(
 
             # Filter out tool usage and thinking blocks
             assistant_content = MessageAdapter.filter_content(raw_assistant_content)
+
+            # Enforce JSON format if JSON mode is enabled
+            if json_mode:
+                original_len = len(assistant_content)
+
+                if DEBUG_MODE or VERBOSE:
+                    raw_preview = assistant_content[:50] if len(assistant_content) > 50 else assistant_content
+                    raw_end = assistant_content[-30:] if len(assistant_content) > 30 else assistant_content
+                    logger.debug(f"Raw response: starts='{raw_preview}' ends='...{raw_end}'")
+
+                assistant_content = MessageAdapter.enforce_json_format(
+                    assistant_content, strict=True
+                )
+
+                logger.info(f"JSON enforcement: {original_len} chars -> {len(assistant_content)} chars")
+
+                if DEBUG_MODE or VERBOSE:
+                    logger.debug(f"Extracted JSON preview: {assistant_content[:200]}")
+                    log_json_structure(assistant_content, logger)
 
             # Add assistant response to session if using session mode
             if actual_session_id:
@@ -864,12 +986,12 @@ async def list_models(
     # Check FastAPI API key if configured
     await verify_api_key(request, credentials)
 
-    # Use constants for single source of truth
+    # Use dynamic models from model_service (fetched from API or fallback to constants)
     return {
         "object": "list",
         "data": [
             {"id": model_id, "object": "model", "owned_by": "anthropic"}
-            for model_id in CLAUDE_MODELS
+            for model_id in model_service.get_models()
         ],
     }
 

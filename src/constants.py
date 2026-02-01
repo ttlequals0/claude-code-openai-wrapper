@@ -70,7 +70,8 @@ DEFAULT_DISALLOWED_TOOLS = [
 # NOTE: Claude Agent SDK only supports Claude 4+ models, not Claude 3.x
 CLAUDE_MODELS = [
     # Claude 4.5 Family (Latest - Fall 2025) - RECOMMENDED
-    "claude-opus-4-5-20250929",  # Latest Opus 4.5 - Most capable
+    "claude-opus-4-5-20251101",  # Latest Opus 4.5 - Most capable (November 2025)
+    "claude-opus-4-5-20250929",  # Opus 4.5 - September version
     "claude-sonnet-4-5-20250929",  # Recommended - best coding model
     "claude-haiku-4-5-20251001",  # Fast & cheap
     # Claude 4.1

@@ -53,6 +53,15 @@ class StreamOptions(BaseModel):
     )
 
 
+class ResponseFormat(BaseModel):
+    """OpenAI-compatible response format specification."""
+
+    type: Literal["text", "json_object"] = Field(
+        default="text",
+        description="Response format type - 'text' for regular text, 'json_object' for JSON mode",
+    )
+
+
 class ChatCompletionRequest(BaseModel):
     model: str = Field(default_factory=get_default_model)
     messages: List[Message]
@@ -78,6 +87,10 @@ class ChatCompletionRequest(BaseModel):
     )
     stream_options: Optional[StreamOptions] = Field(
         default=None, description="Options for streaming responses"
+    )
+    response_format: Optional[ResponseFormat] = Field(
+        default=None,
+        description="Response format - use {'type': 'json_object'} for JSON mode",
     )
 
     @field_validator("n")

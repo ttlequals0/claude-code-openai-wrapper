@@ -1,10 +1,156 @@
 from typing import List, Optional, Dict, Any
 from src.models import Message
 import re
+import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class MessageAdapter:
     """Converts between OpenAI message format and Claude Code prompts."""
+
+    # Instruction to prepend to system prompt for JSON mode
+    JSON_MODE_INSTRUCTION = (
+        "CRITICAL: Your response must be ONLY valid JSON. "
+        "The very first character of your response must be [ or {. "
+        "The very last character of your response must be ] or }. "
+        "Do NOT wrap in markdown code blocks. "
+        "Do NOT use ``` anywhere in your response."
+    )
+
+    # Suffix to append to user prompt to reinforce JSON mode
+    JSON_PROMPT_SUFFIX = (
+        "\n\n---\n"
+        "OUTPUT FORMAT: Raw JSON only. "
+        "First character: [ or {. Last character: ] or }. "
+        "No markdown, no code fences, no explanation."
+    )
+
+    @staticmethod
+    def extract_json(content: str) -> Optional[str]:
+        """
+        Extract JSON from content.
+
+        Handles:
+        1. Pure JSON (content is already valid JSON)
+        2. Markdown code blocks (```json ... ```)
+        3. Embedded JSON (JSON within other text)
+
+        Args:
+            content: The content to extract JSON from
+
+        Returns:
+            Extracted JSON string, or None if no valid JSON found
+        """
+        if not content:
+            logger.debug("extract_json: Empty content")
+            return None
+
+        content = content.strip()
+
+        # Case 1: Try parsing as pure JSON first
+        try:
+            json.loads(content)
+            logger.debug(f"extract_json: Already valid JSON ({len(content)} chars)")
+            return content
+        except json.JSONDecodeError:
+            pass
+
+        # Case 2: Extract from markdown code blocks
+        # Match ```json ... ``` or ``` ... ```
+        code_block_patterns = [
+            r"```json\s*([\s\S]*?)\s*```",  # ```json block
+            r"```\s*([\s\S]*?)\s*```",  # generic ``` block
+        ]
+
+        for pattern in code_block_patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            for match in matches:
+                match = match.strip()
+                try:
+                    json.loads(match)
+                    logger.debug(f"extract_json: Extracted from code block ({len(match)} chars)")
+                    return match
+                except json.JSONDecodeError:
+                    logger.debug("extract_json: Code block match failed validation")
+                    continue
+
+        # Case 3: Find embedded JSON (objects or arrays)
+        # Look for JSON objects {...}
+        object_pattern = r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}"
+        for match in re.finditer(object_pattern, content):
+            candidate = match.group()
+            try:
+                json.loads(candidate)
+                logger.debug(f"extract_json: Extracted embedded object ({len(candidate)} chars)")
+                return candidate
+            except json.JSONDecodeError:
+                continue
+
+        # Look for JSON arrays [...]
+        array_pattern = r"\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\]"
+        for match in re.finditer(array_pattern, content):
+            candidate = match.group()
+            try:
+                json.loads(candidate)
+                logger.debug(f"extract_json: Extracted embedded array ({len(candidate)} chars)")
+                return candidate
+            except json.JSONDecodeError:
+                continue
+
+        # Try more aggressive nested JSON extraction for complex objects
+        # Find the first { and match to the last }
+        first_brace = content.find("{")
+        last_brace = content.rfind("}")
+        if first_brace != -1 and last_brace > first_brace:
+            candidate = content[first_brace : last_brace + 1]
+            try:
+                json.loads(candidate)
+                logger.debug(f"extract_json: Extracted via brace matching ({len(candidate)} chars)")
+                return candidate
+            except json.JSONDecodeError:
+                pass
+
+        # Try for arrays
+        first_bracket = content.find("[")
+        last_bracket = content.rfind("]")
+        if first_bracket != -1 and last_bracket > first_bracket:
+            candidate = content[first_bracket : last_bracket + 1]
+            try:
+                json.loads(candidate)
+                logger.debug(f"extract_json: Extracted via bracket matching ({len(candidate)} chars)")
+                return candidate
+            except json.JSONDecodeError:
+                pass
+
+        logger.warning(f"extract_json: No valid JSON found in {len(content)} chars")
+        logger.debug(f"extract_json: Content preview: {content[:500] if len(content) > 500 else content}")
+        return None
+
+    @staticmethod
+    def enforce_json_format(content: str, strict: bool = False) -> str:
+        """
+        Enforce JSON format on content.
+
+        Args:
+            content: The content to enforce JSON format on
+            strict: If True, return '[]' on failure. If False, return original content.
+
+        Returns:
+            Valid JSON string, or fallback value based on strict mode
+        """
+        extracted = MessageAdapter.extract_json(content)
+
+        if extracted:
+            logger.debug(f"enforce_json_format: Successfully extracted ({len(extracted)} chars)")
+            return extracted
+
+        logger.warning(f"enforce_json_format: Extraction failed, strict={strict}")
+        if strict:
+            return "[]"
+
+        return content
 
     @staticmethod
     def messages_to_prompt(messages: List[Message]) -> tuple[str, Optional[str]]:

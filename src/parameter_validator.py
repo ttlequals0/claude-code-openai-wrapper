@@ -3,17 +3,33 @@ Parameter validation and mapping utilities for OpenAI to Claude Code SDK convers
 """
 
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set
 from src.models import ChatCompletionRequest
 from src.constants import CLAUDE_MODELS
 
 logger = logging.getLogger(__name__)
 
 
+def get_supported_models() -> Set[str]:
+    """Get supported models from model_service or fallback to constants."""
+    try:
+        from src.model_service import model_service
+
+        return set(model_service.get_models())
+    except ImportError:
+        return set(CLAUDE_MODELS)
+
+
 class ParameterValidator:
     """Validates and maps OpenAI Chat Completions parameters to Claude Code SDK options."""
 
-    # Use models from constants (single source of truth)
+    @classmethod
+    def get_supported_models(cls) -> Set[str]:
+        """Get currently supported models (dynamic or fallback)."""
+        return get_supported_models()
+
+    # Legacy class attribute for backwards compatibility
+    # Use get_supported_models() method for dynamic models
     SUPPORTED_MODELS = set(CLAUDE_MODELS)
 
     # Valid permission modes for Claude Code SDK
@@ -22,9 +38,10 @@ class ParameterValidator:
     @classmethod
     def validate_model(cls, model: str) -> bool:
         """Validate that the model is supported by Claude Code SDK."""
-        if model not in cls.SUPPORTED_MODELS:
+        supported = cls.get_supported_models()
+        if model not in supported:
             logger.warning(
-                f"Model '{model}' is not in the known supported models list. It will still be attempted but may fail. Supported models: {sorted(cls.SUPPORTED_MODELS)}"
+                f"Model '{model}' is not in the known supported models list. It will still be attempted but may fail. Supported models: {sorted(supported)}"
             )
             # Return True anyway to allow graceful degradation
         return True
@@ -164,6 +181,8 @@ class CompatibilityReporter:
             report["supported_parameters"].append("stream")
         if request.user:
             report["supported_parameters"].append("user (for logging)")
+        if request.response_format:
+            report["supported_parameters"].append("response_format")
 
         # Check unsupported parameters with suggestions
         if request.temperature != 1.0:
