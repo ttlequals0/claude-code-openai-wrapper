@@ -53,6 +53,7 @@ from src.rate_limiter import (
 )
 from src.constants import CLAUDE_MODELS, CLAUDE_TOOLS, DEFAULT_ALLOWED_TOOLS
 from src.model_service import model_service
+from src.request_cache import request_cache
 
 # Load environment variables
 load_dotenv()
@@ -602,9 +603,12 @@ async def generate_streaming_response(
                 raw_end = combined_content[-30:] if len(combined_content) > 30 else combined_content
                 logger.debug(f"Raw response: starts='{raw_preview}' ends='...{raw_end}'")
 
-            json_content = MessageAdapter.enforce_json_format(combined_content, strict=True)
+            json_content, extraction_metadata = MessageAdapter.enforce_json_format_with_metadata(
+                combined_content, strict=True
+            )
 
             if DEBUG_MODE or VERBOSE:
+                logger.debug(f"JSON extraction metadata: {extraction_metadata}")
                 logger.debug(f"Extracted JSON preview: {json_content[:200]}")
                 log_json_structure(json_content, logger)
 
@@ -739,6 +743,17 @@ async def chat_completions(
             )
         else:
             # Non-streaming response
+            # Check cache if enabled and requested via header
+            cache_enabled = request.headers.get("X-Enable-Cache", "").lower() in ("true", "1", "yes")
+            if cache_enabled and request_cache.enabled:
+                request_dict = request_body.model_dump()
+                cached_response = request_cache.get(request_dict)
+                if cached_response:
+                    logger.info(f"Cache hit for request {request_id}")
+                    # Return cached response with updated request ID
+                    cached_response["id"] = request_id
+                    return cached_response
+
             # Process messages with session management
             all_messages, actual_session_id = session_manager.process_messages(
                 request_body.messages, request_body.session_id
@@ -836,13 +851,15 @@ async def chat_completions(
                     raw_end = assistant_content[-30:] if len(assistant_content) > 30 else assistant_content
                     logger.debug(f"Raw response: starts='{raw_preview}' ends='...{raw_end}'")
 
-                assistant_content = MessageAdapter.enforce_json_format(
+                assistant_content, extraction_metadata = MessageAdapter.enforce_json_format_with_metadata(
                     assistant_content, strict=True
                 )
 
-                logger.info(f"JSON enforcement: {original_len} chars -> {len(assistant_content)} chars")
+                logger.info(f"JSON enforcement: {original_len} chars -> {len(assistant_content)} chars "
+                           f"(method={extraction_metadata.get('method', 'unknown')})")
 
                 if DEBUG_MODE or VERBOSE:
+                    logger.debug(f"JSON extraction metadata: {extraction_metadata}")
                     logger.debug(f"Extracted JSON preview: {assistant_content[:200]}")
                     log_json_structure(assistant_content, logger)
 
@@ -872,6 +889,13 @@ async def chat_completions(
                     total_tokens=prompt_tokens + completion_tokens,
                 ),
             )
+
+            # Store in cache if enabled
+            if cache_enabled and request_cache.enabled:
+                request_dict = request_body.model_dump()
+                response_dict = response.model_dump()
+                request_cache.set(request_dict, response_dict)
+                logger.debug(f"Cached response for request {request_id}")
 
             return response
 
@@ -994,6 +1018,41 @@ async def list_models(
             for model_id in model_service.get_models()
         ],
     }
+
+
+@app.post("/v1/models/refresh")
+@rate_limit_endpoint("general")
+async def refresh_models_endpoint(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+):
+    """Refresh the models list from the Anthropic API.
+
+    Requires ANTHROPIC_API_KEY to be set. If the API call fails,
+    the existing cached models are preserved.
+
+    Returns:
+        On success: {"success": true, "count": N, "source": "api", "models": [...]}
+        On failure: {"success": false, "message": "...", "current_count": N, "source": "..."}
+    """
+    await verify_api_key(request, credentials)
+    result = await model_service.refresh_models()
+    return result
+
+
+@app.get("/v1/models/status")
+@rate_limit_endpoint("general")
+async def get_models_status(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+):
+    """Get model service status including source and last refresh time.
+
+    Returns:
+        {"initialized": bool, "source": "api"|"fallback", "model_count": N, "last_refresh": timestamp|null}
+    """
+    await verify_api_key(request, credentials)
+    return model_service.get_status()
 
 
 @app.post("/v1/compatibility")
@@ -1445,6 +1504,19 @@ async def root():
                 document.getElementById('moon-icon').classList.toggle('hidden', !isDark);
             }}
 
+            async function refreshModels() {{
+                const resultDiv = document.getElementById('data-models-refresh');
+                resultDiv.innerHTML = '<small>Refreshing...</small>';
+                try {{
+                    const response = await fetch('/v1/models/refresh', {{ method: 'POST' }});
+                    const data = await response.json();
+                    const formatted = JSON.stringify(data, null, 2);
+                    resultDiv.innerHTML = '<pre style="background: var(--pico-code-background-color); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 13px;">' + formatted + '</pre>';
+                }} catch (error) {{
+                    resultDiv.innerHTML = '<span style="color: #ef4444;">Error: ' + error.message + '</span>';
+                }}
+            }}
+
             document.addEventListener('DOMContentLoaded', () => {{
                 const saved = localStorage.getItem('theme');
                 if (saved) {{
@@ -1550,6 +1622,31 @@ async def root():
                     <div class="content">
                         <small id="loader-models" class="hidden">Loading...</small>
                         <div id="data-models"></div>
+                    </div>
+                </details>
+
+                <details id="models-status" data-endpoint="/v1/models/status" name="endpoints">
+                    <summary>
+                        <span class="badge badge-get">GET</span>
+                        <code>/v1/models/status</code>
+                        <span class="endpoint-desc">Model service status</span>
+                    </summary>
+                    <div class="content">
+                        <small id="loader-models-status" class="hidden">Loading...</small>
+                        <div id="data-models-status"></div>
+                    </div>
+                </details>
+
+                <details id="models-refresh" name="endpoints">
+                    <summary>
+                        <span class="badge badge-post">POST</span>
+                        <code>/v1/models/refresh</code>
+                        <span class="endpoint-desc">Refresh models from API</span>
+                    </summary>
+                    <div class="content">
+                        <p style="margin-bottom: 8px; color: #6b7280;">Requires <code>CLAUDE_AUTH_METHOD=api_key</code> with <code>ANTHROPIC_API_KEY</code> set.</p>
+                        <button onclick="refreshModels()" style="background: #10b981; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 14px;">Refresh Models</button>
+                        <div id="data-models-refresh" style="margin-top: 12px;"></div>
                     </div>
                 </details>
 
@@ -2027,6 +2124,41 @@ async def get_mcp_stats(
     """Get statistics about MCP connections."""
     await verify_api_key(request, credentials)
     return mcp_client.get_stats()
+
+
+# ============================================================================
+# Cache Endpoints
+# ============================================================================
+
+
+@app.get("/v1/cache/stats")
+@rate_limit_endpoint("general")
+async def get_cache_stats(
+    request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+):
+    """Get request cache statistics.
+
+    Returns information about cache configuration, current size, hit/miss rates,
+    and eviction counts. Cache is opt-in and disabled by default.
+
+    Enable cache by setting REQUEST_CACHE_ENABLED=true environment variable.
+    """
+    await verify_api_key(request, credentials)
+    return request_cache.get_stats()
+
+
+@app.post("/v1/cache/clear")
+@rate_limit_endpoint("general")
+async def clear_cache(
+    request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+):
+    """Clear all cached responses.
+
+    Returns the number of entries that were cleared.
+    """
+    await verify_api_key(request, credentials)
+    count = request_cache.clear()
+    return {"message": f"Cleared {count} cache entries", "entries_cleared": count}
 
 
 @app.exception_handler(HTTPException)
