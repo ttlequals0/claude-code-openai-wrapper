@@ -5,6 +5,22 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.2] - 2026-02-06
+
+### Added
+
+- **Auth Method Awareness in Model Service**: Model refresh now respects `CLAUDE_AUTH_METHOD` configuration
+  - `anthropic` auth: Full support for dynamic model fetching from API
+  - `cli`, `bedrock`, `vertex` auth: Uses static fallback model list (API key not available)
+- **Auth Method in Responses**: `/v1/models/refresh` and `/v1/models/status` responses now include `auth_method` field
+- **Landing Page Updates**: Added `/v1/models/status` and `/v1/models/refresh` endpoint cards to the dashboard UI with interactive refresh button
+- **Unit Tests**: Comprehensive tests for different auth method behaviors in model service
+
+### Changed
+
+- **Updated Model List**: Added `claude-opus-4-6` (latest), removed outdated `claude-opus-4-5-20250929` from static fallback list
+- **Improved Error Messages**: Refresh endpoint now returns clear message when using non-anthropic auth methods
+
 ## [2.4.1] - 2026-02-06
 
 ### Added

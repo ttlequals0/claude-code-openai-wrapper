@@ -1504,6 +1504,19 @@ async def root():
                 document.getElementById('moon-icon').classList.toggle('hidden', !isDark);
             }}
 
+            async function refreshModels() {{
+                const resultDiv = document.getElementById('data-models-refresh');
+                resultDiv.innerHTML = '<small>Refreshing...</small>';
+                try {{
+                    const response = await fetch('/v1/models/refresh', {{ method: 'POST' }});
+                    const data = await response.json();
+                    const formatted = JSON.stringify(data, null, 2);
+                    resultDiv.innerHTML = '<pre style="background: var(--pico-code-background-color); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 13px;">' + formatted + '</pre>';
+                }} catch (error) {{
+                    resultDiv.innerHTML = '<span style="color: #ef4444;">Error: ' + error.message + '</span>';
+                }}
+            }}
+
             document.addEventListener('DOMContentLoaded', () => {{
                 const saved = localStorage.getItem('theme');
                 if (saved) {{
@@ -1609,6 +1622,31 @@ async def root():
                     <div class="content">
                         <small id="loader-models" class="hidden">Loading...</small>
                         <div id="data-models"></div>
+                    </div>
+                </details>
+
+                <details id="models-status" data-endpoint="/v1/models/status" name="endpoints">
+                    <summary>
+                        <span class="badge badge-get">GET</span>
+                        <code>/v1/models/status</code>
+                        <span class="endpoint-desc">Model service status</span>
+                    </summary>
+                    <div class="content">
+                        <small id="loader-models-status" class="hidden">Loading...</small>
+                        <div id="data-models-status"></div>
+                    </div>
+                </details>
+
+                <details id="models-refresh" name="endpoints">
+                    <summary>
+                        <span class="badge badge-post">POST</span>
+                        <code>/v1/models/refresh</code>
+                        <span class="endpoint-desc">Refresh models from API</span>
+                    </summary>
+                    <div class="content">
+                        <p style="margin-bottom: 8px; color: #6b7280;">Requires <code>CLAUDE_AUTH_METHOD=api_key</code> with <code>ANTHROPIC_API_KEY</code> set.</p>
+                        <button onclick="refreshModels()" style="background: #10b981; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 14px;">Refresh Models</button>
+                        <div id="data-models-refresh" style="margin-top: 12px;"></div>
                     </div>
                 </details>
 

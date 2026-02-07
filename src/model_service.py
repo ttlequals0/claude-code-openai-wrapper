@@ -6,6 +6,7 @@ This service provides:
 - Runtime model refresh via refresh_models() method
 - Graceful fallback to static CLAUDE_MODELS when API is unavailable
 - Caching of fetched models with refresh timestamp tracking
+- Auth method awareness (only fetches from API for 'anthropic' auth)
 """
 
 import os
@@ -16,6 +17,7 @@ from typing import List, Optional, Dict, Any
 import httpx
 
 from src.constants import CLAUDE_MODELS
+from src.auth import auth_manager
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +71,44 @@ class ModelService:
 
     async def fetch_models_from_api(self) -> Optional[List[str]]:
         """
-        Fetch models from Anthropic API.
+        Fetch models based on configured auth method.
+
+        Only the 'anthropic' auth method supports dynamic model fetching.
+        Other auth methods (cli, bedrock, vertex) use static model lists.
+
+        Returns list of model IDs on success, None on failure/unsupported.
+        """
+        auth_method = auth_manager.auth_method
+
+        if auth_method == "anthropic":
+            # Use ANTHROPIC_API_KEY for direct API call
+            api_key = os.getenv("ANTHROPIC_API_KEY")
+            if not api_key:
+                logger.debug("ANTHROPIC_API_KEY not set, using fallback")
+                return None
+            return await self._fetch_with_api_key(api_key)
+
+        elif auth_method == "claude_cli":
+            # CLI auth doesn't expose API key - use fallback
+            logger.info("CLI auth method configured - using static model list")
+            return None
+
+        elif auth_method == "bedrock":
+            # Bedrock uses different model naming, use fallback
+            logger.info("Bedrock auth method - using static model list")
+            return None
+
+        elif auth_method == "vertex":
+            # Vertex uses different model naming, use fallback
+            logger.info("Vertex auth method - using static model list")
+            return None
+
+        logger.debug(f"Unknown auth method '{auth_method}', using fallback")
+        return None
+
+    async def _fetch_with_api_key(self, api_key: str) -> Optional[List[str]]:
+        """
+        Fetch models from Anthropic API using API key.
 
         GET https://api.anthropic.com/v1/models
         Headers:
@@ -78,12 +117,6 @@ class ModelService:
 
         Returns list of model IDs on success, None on failure.
         """
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-
-        if not api_key:
-            logger.debug("ANTHROPIC_API_KEY not set, skipping API model fetch")
-            return None
-
         if not self._http_client:
             self._http_client = httpx.AsyncClient(timeout=MODEL_FETCH_TIMEOUT)
 
@@ -150,7 +183,22 @@ class ModelService:
 
         Returns a dict with refresh status and model information.
         If the API call fails, existing cached models are preserved.
+
+        Note: Only 'anthropic' auth method supports dynamic refresh.
+        Other auth methods will return success=False with explanation.
         """
+        auth_method = auth_manager.auth_method
+
+        # Check if auth method supports dynamic refresh
+        if auth_method != "anthropic":
+            return {
+                "success": False,
+                "message": f"Dynamic refresh requires ANTHROPIC_API_KEY. Current auth: {auth_method}",
+                "current_count": len(self.get_models()),
+                "source": self._source,
+                "auth_method": auth_method,
+            }
+
         models = await self.fetch_models_from_api()
         if models:
             self._cached_models = models
@@ -162,6 +210,7 @@ class ModelService:
                 "count": len(models),
                 "source": "api",
                 "models": models,
+                "auth_method": auth_method,
             }
         else:
             return {
@@ -169,15 +218,17 @@ class ModelService:
                 "message": "API fetch failed, keeping existing models",
                 "current_count": len(self.get_models()),
                 "source": self._source,
+                "auth_method": auth_method,
             }
 
     def get_status(self) -> Dict[str, Any]:
-        """Get service status including source and last refresh time."""
+        """Get service status including source, auth method, and last refresh time."""
         return {
             "initialized": self._initialized,
             "source": self._source,
             "model_count": len(self.get_models()),
             "last_refresh": self._last_refresh,
+            "auth_method": auth_manager.auth_method,
         }
 
 
