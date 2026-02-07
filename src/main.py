@@ -1020,6 +1020,41 @@ async def list_models(
     }
 
 
+@app.post("/v1/models/refresh")
+@rate_limit_endpoint("general")
+async def refresh_models_endpoint(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+):
+    """Refresh the models list from the Anthropic API.
+
+    Requires ANTHROPIC_API_KEY to be set. If the API call fails,
+    the existing cached models are preserved.
+
+    Returns:
+        On success: {"success": true, "count": N, "source": "api", "models": [...]}
+        On failure: {"success": false, "message": "...", "current_count": N, "source": "..."}
+    """
+    await verify_api_key(request, credentials)
+    result = await model_service.refresh_models()
+    return result
+
+
+@app.get("/v1/models/status")
+@rate_limit_endpoint("general")
+async def get_models_status(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+):
+    """Get model service status including source and last refresh time.
+
+    Returns:
+        {"initialized": bool, "source": "api"|"fallback", "model_count": N, "last_refresh": timestamp|null}
+    """
+    await verify_api_key(request, credentials)
+    return model_service.get_status()
+
+
 @app.post("/v1/compatibility")
 async def check_compatibility(request_body: ChatCompletionRequest):
     """Check OpenAI API compatibility for a request."""

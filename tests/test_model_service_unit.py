@@ -6,6 +6,7 @@ Tests the ModelService class that fetches models from Anthropic API
 with graceful fallback to static constants.
 """
 
+import time
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
 import httpx
@@ -253,3 +254,161 @@ class TestModelServiceIntegration:
             assert models == list(CLAUDE_MODELS)
 
             await service.shutdown()
+
+
+class TestModelServiceRefresh:
+    """Tests for model refresh functionality."""
+
+    @pytest.fixture
+    def model_service(self):
+        """Create a fresh ModelService instance for each test."""
+        return ModelService()
+
+    @pytest.mark.asyncio
+    async def test_refresh_models_success(self, model_service):
+        """Refresh successfully updates cached models."""
+        # First, initialize with some models
+        model_service._cached_models = ["old-model-1", "old-model-2"]
+        model_service._source = "api"
+        model_service._initialized = True
+
+        new_models = ["new-model-1", "new-model-2", "new-model-3"]
+
+        with patch.object(
+            model_service, "fetch_models_from_api", new_callable=AsyncMock
+        ) as mock:
+            mock.return_value = new_models
+
+            result = await model_service.refresh_models()
+
+        assert result["success"] is True
+        assert result["count"] == 3
+        assert result["source"] == "api"
+        assert result["models"] == new_models
+        assert model_service._cached_models == new_models
+        assert model_service._source == "api"
+        assert model_service._last_refresh is not None
+
+    @pytest.mark.asyncio
+    async def test_refresh_models_failure_preserves_existing(self, model_service):
+        """Refresh failure preserves existing cached models."""
+        existing_models = ["existing-model-1", "existing-model-2"]
+        model_service._cached_models = existing_models
+        model_service._source = "api"
+        model_service._initialized = True
+
+        with patch.object(
+            model_service, "fetch_models_from_api", new_callable=AsyncMock
+        ) as mock:
+            mock.return_value = None  # API failed
+
+            result = await model_service.refresh_models()
+
+        assert result["success"] is False
+        assert "API fetch failed" in result["message"]
+        assert result["current_count"] == 2
+        assert result["source"] == "api"
+        # Existing models should be preserved
+        assert model_service._cached_models == existing_models
+
+    @pytest.mark.asyncio
+    async def test_refresh_models_updates_last_refresh_time(self, model_service):
+        """Refresh updates the last_refresh timestamp."""
+        model_service._initialized = True
+
+        before_time = time.time()
+
+        with patch.object(
+            model_service, "fetch_models_from_api", new_callable=AsyncMock
+        ) as mock:
+            mock.return_value = ["model-1"]
+
+            await model_service.refresh_models()
+
+        after_time = time.time()
+
+        assert model_service._last_refresh is not None
+        assert before_time <= model_service._last_refresh <= after_time
+
+    @pytest.mark.asyncio
+    async def test_refresh_models_failure_does_not_update_timestamp(self, model_service):
+        """Refresh failure does not update last_refresh timestamp."""
+        model_service._cached_models = ["model-1"]
+        model_service._last_refresh = 1000.0  # Some old timestamp
+        model_service._initialized = True
+
+        with patch.object(
+            model_service, "fetch_models_from_api", new_callable=AsyncMock
+        ) as mock:
+            mock.return_value = None
+
+            await model_service.refresh_models()
+
+        # Timestamp should remain unchanged
+        assert model_service._last_refresh == 1000.0
+
+    def test_get_status_returns_correct_info(self, model_service):
+        """get_status returns correct service status."""
+        model_service._initialized = True
+        model_service._source = "api"
+        model_service._cached_models = ["model-1", "model-2", "model-3"]
+        model_service._last_refresh = 1234567890.0
+
+        status = model_service.get_status()
+
+        assert status["initialized"] is True
+        assert status["source"] == "api"
+        assert status["model_count"] == 3
+        assert status["last_refresh"] == 1234567890.0
+
+    def test_get_status_fallback_source(self, model_service):
+        """get_status shows fallback source when not from API."""
+        model_service._initialized = True
+        model_service._source = "fallback"
+        model_service._cached_models = None
+        model_service._last_refresh = None
+
+        status = model_service.get_status()
+
+        assert status["initialized"] is True
+        assert status["source"] == "fallback"
+        assert status["model_count"] == len(CLAUDE_MODELS)
+        assert status["last_refresh"] is None
+
+    @pytest.mark.asyncio
+    async def test_initialize_sets_source_api_on_success(self, model_service):
+        """Initialize sets source to 'api' when fetch succeeds."""
+        with patch.object(
+            model_service, "fetch_models_from_api", new_callable=AsyncMock
+        ) as mock:
+            mock.return_value = ["model-1", "model-2"]
+
+            await model_service.initialize()
+
+        assert model_service._source == "api"
+        assert model_service._last_refresh is not None
+
+    @pytest.mark.asyncio
+    async def test_initialize_sets_source_fallback_on_failure(self, model_service):
+        """Initialize sets source to 'fallback' when fetch fails."""
+        with patch.object(
+            model_service, "fetch_models_from_api", new_callable=AsyncMock
+        ) as mock:
+            mock.return_value = None
+
+            await model_service.initialize()
+
+        assert model_service._source == "fallback"
+        assert model_service._last_refresh is None
+
+    @pytest.mark.asyncio
+    async def test_shutdown_resets_source_and_timestamp(self, model_service):
+        """Shutdown resets source and last_refresh."""
+        model_service._source = "api"
+        model_service._last_refresh = 1234567890.0
+        model_service._initialized = True
+
+        await model_service.shutdown()
+
+        assert model_service._source == "fallback"
+        assert model_service._last_refresh is None

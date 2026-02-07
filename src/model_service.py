@@ -3,13 +3,15 @@ Model service for dynamically fetching available models from Anthropic API.
 
 This service provides:
 - Dynamic model discovery from Anthropic API on startup
+- Runtime model refresh via refresh_models() method
 - Graceful fallback to static CLAUDE_MODELS when API is unavailable
-- Caching of fetched models for the session lifetime
+- Caching of fetched models with refresh timestamp tracking
 """
 
 import os
+import time
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 import httpx
 
@@ -30,6 +32,8 @@ class ModelService:
         self._cached_models: Optional[List[str]] = None
         self._http_client: Optional[httpx.AsyncClient] = None
         self._initialized: bool = False
+        self._last_refresh: Optional[float] = None
+        self._source: str = "fallback"  # "api" or "fallback"
 
     async def initialize(self) -> None:
         """Called during app startup - fetch models from API."""
@@ -43,9 +47,12 @@ class ModelService:
 
         if fetched_models:
             self._cached_models = fetched_models
+            self._source = "api"
+            self._last_refresh = time.time()
             logger.info(f"Successfully fetched {len(fetched_models)} models from Anthropic API")
         else:
             self._cached_models = None
+            self._source = "fallback"
             logger.info("Using fallback static model list from constants")
 
         self._initialized = True
@@ -57,6 +64,8 @@ class ModelService:
             self._http_client = None
         self._cached_models = None
         self._initialized = False
+        self._last_refresh = None
+        self._source = "fallback"
 
     async def fetch_models_from_api(self) -> Optional[List[str]]:
         """
@@ -135,6 +144,41 @@ class ModelService:
     def is_initialized(self) -> bool:
         """Check if service has been initialized."""
         return self._initialized
+
+    async def refresh_models(self) -> Dict[str, Any]:
+        """Force refresh models from Anthropic API.
+
+        Returns a dict with refresh status and model information.
+        If the API call fails, existing cached models are preserved.
+        """
+        models = await self.fetch_models_from_api()
+        if models:
+            self._cached_models = models
+            self._last_refresh = time.time()
+            self._source = "api"
+            logger.info(f"Refreshed {len(models)} models from Anthropic API")
+            return {
+                "success": True,
+                "count": len(models),
+                "source": "api",
+                "models": models,
+            }
+        else:
+            return {
+                "success": False,
+                "message": "API fetch failed, keeping existing models",
+                "current_count": len(self.get_models()),
+                "source": self._source,
+            }
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get service status including source and last refresh time."""
+        return {
+            "initialized": self._initialized,
+            "source": self._source,
+            "model_count": len(self.get_models()),
+            "last_refresh": self._last_refresh,
+        }
 
 
 # Global singleton instance

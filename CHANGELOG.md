@@ -5,6 +5,19 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.1] - 2026-02-06
+
+### Added
+
+- **Dynamic Model Refresh**: New `POST /v1/models/refresh` endpoint to refresh models from Anthropic API at runtime without server restart
+- **Model Service Status**: New `GET /v1/models/status` endpoint returning service status including source (api/fallback) and last refresh timestamp
+- **Refresh Tracking**: ModelService now tracks `_last_refresh` timestamp and `_source` (api or fallback) for observability
+- **Unit Tests**: Comprehensive tests for model refresh functionality including success/failure scenarios, timestamp tracking, and status reporting
+
+### Changed
+
+- **ModelService**: Enhanced with `refresh_models()` async method and `get_status()` method for runtime model management
+
 ## [2.4.0] - 2026-02-04
 
 ### Added
