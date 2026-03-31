@@ -5,7 +5,7 @@ Parameter validation and mapping utilities for OpenAI to Claude Code SDK convers
 import logging
 from typing import Dict, Any, List, Optional, Set
 from src.models import ChatCompletionRequest
-from src.constants import CLAUDE_MODELS
+from src.constants import CLAUDE_MODELS, MODEL_METADATA, VALID_EFFORT_LEVELS, VALID_THINKING_MODES
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +156,54 @@ class ParameterValidator:
                     f"Invalid X-Claude-Max-Thinking-Tokens header: {headers['x-claude-max-thinking-tokens']}"
                 )
 
+        # Extract effort level (low, medium, high, max)
+        if "x-claude-effort" in headers:
+            effort = headers["x-claude-effort"].lower().strip()
+            if effort in VALID_EFFORT_LEVELS:
+                claude_options["effort"] = effort
+            else:
+                logger.warning(
+                    f"Invalid X-Claude-Effort header: '{effort}'. "
+                    f"Valid values: {sorted(VALID_EFFORT_LEVELS)}"
+                )
+
+        # Extract thinking mode (adaptive, enabled, disabled)
+        if "x-claude-thinking" in headers:
+            thinking = headers["x-claude-thinking"].lower().strip()
+            if thinking in VALID_THINKING_MODES:
+                claude_options["thinking"] = thinking
+            else:
+                logger.warning(
+                    f"Invalid X-Claude-Thinking header: '{thinking}'. "
+                    f"Valid values: {sorted(VALID_THINKING_MODES)}"
+                )
+
         return claude_options
+
+    @classmethod
+    def validate_max_tokens(cls, model: str, requested_max_tokens: Optional[int]) -> Optional[int]:
+        """Validate and cap max_tokens based on model-specific limits.
+
+        Returns the validated max_tokens value, or None if not specified.
+        Model metadata sourced from open-sourced Claude Code CLI.
+        """
+        if requested_max_tokens is None:
+            return None
+
+        metadata = MODEL_METADATA.get(model)
+        if not metadata:
+            # Unknown model, pass through without validation
+            return requested_max_tokens
+
+        max_limit = metadata["max_output_limit"]
+        if requested_max_tokens > max_limit:
+            logger.warning(
+                f"max_tokens={requested_max_tokens} exceeds limit for {model} "
+                f"(max={max_limit}). Capping to {max_limit}."
+            )
+            return max_limit
+
+        return requested_max_tokens
 
 
 class CompatibilityReporter:
