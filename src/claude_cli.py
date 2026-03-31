@@ -8,6 +8,8 @@ import logging
 
 from claude_agent_sdk import query, ClaudeAgentOptions
 
+from src.retry import RetryState, retry_delay
+
 logger = logging.getLogger(__name__)
 
 
@@ -104,6 +106,8 @@ class ClaudeCodeCLI:
         session_id: Optional[str] = None,
         continue_session: bool = False,
         permission_mode: Optional[str] = None,
+        effort: Optional[str] = None,
+        thinking: Optional[str] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Run Claude Agent using the Python SDK and yield response chunks."""
 
@@ -141,37 +145,66 @@ class ClaudeCodeCLI:
                 if permission_mode:
                     options.permission_mode = permission_mode
 
+                # Set effort level and thinking mode if specified
+                if effort:
+                    options.effort = effort
+                if thinking:
+                    options.thinking = thinking
+
                 # Handle session continuity
                 if continue_session:
                     options.continue_session = True
                 elif session_id:
                     options.resume = session_id
 
-                # Run the query and yield messages
-                async for message in query(prompt=prompt, options=options):
-                    # Debug logging
-                    logger.debug(f"Raw SDK message type: {type(message)}")
-                    logger.debug(f"Raw SDK message: {message}")
+                # Run the query with retry logic
+                retry_state = RetryState()
+                current_model = model
 
-                    # Convert message object to dict if needed
-                    if hasattr(message, "__dict__") and not isinstance(message, dict):
-                        # Convert object to dict for consistent handling
-                        message_dict = {}
+                while True:
+                    try:
+                        if current_model and current_model != model:
+                            options.model = current_model
 
-                        # Get all attributes from the object
-                        for attr_name in dir(message):
-                            if not attr_name.startswith("_"):  # Skip private attributes
-                                try:
-                                    attr_value = getattr(message, attr_name)
-                                    if not callable(attr_value):  # Skip methods
-                                        message_dict[attr_name] = attr_value
-                                except:
-                                    pass
+                        async for message in query(prompt=prompt, options=options):
+                            logger.debug(f"Raw SDK message type: {type(message)}")
+                            logger.debug(f"Raw SDK message: {message}")
 
-                        logger.debug(f"Converted message dict: {message_dict}")
-                        yield message_dict
-                    else:
-                        yield message
+                            if hasattr(message, "__dict__") and not isinstance(message, dict):
+                                message_dict = {}
+                                for attr_name in dir(message):
+                                    if not attr_name.startswith("_"):
+                                        try:
+                                            attr_value = getattr(message, attr_name)
+                                            if not callable(attr_value):
+                                                message_dict[attr_name] = attr_value
+                                        except:
+                                            pass
+                                logger.debug(f"Converted message dict: {message_dict}")
+                                yield message_dict
+                            else:
+                                yield message
+
+                        break  # Success, exit retry loop
+
+                    except Exception as query_error:
+                        error_str = str(query_error)
+                        status_code = getattr(query_error, "status_code", None)
+
+                        retry_state.record_attempt(status_code)
+
+                        # Check for model fallback on overload
+                        if current_model:
+                            fallback = retry_state.get_fallback_model(current_model)
+                            if fallback:
+                                current_model = fallback
+                                options.model = current_model
+
+                        if retry_state.should_retry(status_code=status_code, error=query_error):
+                            await retry_delay(retry_state)
+                            continue
+
+                        raise  # Not retryable, propagate
 
             finally:
                 # Restore original environment (if we changed anything)
@@ -184,7 +217,6 @@ class ClaudeCodeCLI:
 
         except Exception as e:
             logger.error(f"Claude Agent SDK error: {e}")
-            # Yield error message in the expected format
             yield {
                 "type": "result",
                 "subtype": "error_during_execution",

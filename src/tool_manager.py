@@ -30,20 +30,22 @@ class ToolMetadata:
 
 # Tool metadata database
 TOOL_METADATA: Dict[str, ToolMetadata] = {
-    "Task": ToolMetadata(
-        name="Task",
-        description="Launch specialized agents for complex, multi-step tasks",
+    "Agent": ToolMetadata(
+        name="Agent",
+        description="Spawn sub-agents for complex, multi-step tasks",
         category="agent",
         parameters={
             "description": "Short description of the task",
             "prompt": "Detailed task instructions for the agent",
             "subagent_type": "Type of specialized agent to use",
+            "model": "Optional model override for the agent",
+            "isolation": "Isolation mode (e.g., worktree)",
         },
         examples=[
             "Launch a general-purpose agent to refactor code",
             "Use Explore agent to find API endpoints",
         ],
-        is_safe=False,  # Can spawn sub-agents
+        is_safe=False,
         requires_network=False,
     ),
     "Bash": ToolMetadata(
@@ -54,9 +56,10 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
             "command": "The bash command to execute",
             "timeout": "Optional timeout in milliseconds",
             "run_in_background": "Run command in background",
+            "description": "Description of what the command does",
         },
         examples=["Run npm install", "Execute git status", "List directory contents"],
-        is_safe=True,
+        is_safe=False,  # Requires permission in Claude Code
         requires_network=False,
     ),
     "Glob": ToolMetadata(
@@ -236,7 +239,163 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         is_safe=True,
         requires_network=False,
     ),
+    "SendMessage": ToolMetadata(
+        name="SendMessage",
+        description="Send messages to teammates or other agents",
+        category="agent",
+        parameters={"to": "Recipient agent or teammate", "message": "Message content"},
+        examples=["Send status update to teammate"],
+        is_safe=False,
+        requires_network=False,
+    ),
+    "TaskCreate": ToolMetadata(
+        name="TaskCreate",
+        description="Create a new task for tracking work",
+        category="task",
+        parameters={"subject": "Task subject", "description": "Task description"},
+        examples=["Create task to track implementation progress"],
+        is_safe=True,
+        requires_network=False,
+    ),
+    "TaskUpdate": ToolMetadata(
+        name="TaskUpdate",
+        description="Update an existing task status or details",
+        category="task",
+        parameters={"taskId": "Task ID", "status": "New status"},
+        examples=["Mark task as completed"],
+        is_safe=True,
+        requires_network=False,
+    ),
+    "TaskGet": ToolMetadata(
+        name="TaskGet",
+        description="Get details of a specific task",
+        category="task",
+        parameters={"taskId": "Task ID to retrieve"},
+        examples=["Get task details by ID"],
+        is_safe=True,
+        requires_network=False,
+    ),
+    "TaskList": ToolMetadata(
+        name="TaskList",
+        description="List all tasks",
+        category="task",
+        parameters={},
+        examples=["List all active tasks"],
+        is_safe=True,
+        requires_network=False,
+    ),
+    "TaskOutput": ToolMetadata(
+        name="TaskOutput",
+        description="Get the output of a completed task",
+        category="task",
+        parameters={"taskId": "Task ID"},
+        examples=["Retrieve output from finished task"],
+        is_safe=True,
+        requires_network=False,
+    ),
+    "TaskStop": ToolMetadata(
+        name="TaskStop",
+        description="Stop a running task",
+        category="task",
+        parameters={"taskId": "Task ID to stop"},
+        examples=["Cancel a running background task"],
+        is_safe=True,
+        requires_network=False,
+    ),
+    "EnterPlanMode": ToolMetadata(
+        name="EnterPlanMode",
+        description="Enter plan mode for designing implementation approach",
+        category="planning",
+        parameters={},
+        examples=["Enter plan mode before implementing a feature"],
+        is_safe=True,
+        requires_network=False,
+    ),
+    "ExitPlanMode": ToolMetadata(
+        name="ExitPlanMode",
+        description="Exit plan mode and present plan for approval",
+        category="planning",
+        parameters={},
+        examples=["Exit plan mode after finishing design"],
+        is_safe=True,
+        requires_network=False,
+    ),
+    "EnterWorktree": ToolMetadata(
+        name="EnterWorktree",
+        description="Create an isolated git worktree for safe changes",
+        category="git",
+        parameters={"branch": "Branch name for the worktree"},
+        examples=["Create isolated worktree for feature work"],
+        is_safe=True,
+        requires_network=False,
+    ),
+    "ExitWorktree": ToolMetadata(
+        name="ExitWorktree",
+        description="Exit and clean up a git worktree",
+        category="git",
+        parameters={},
+        examples=["Clean up worktree after finishing work"],
+        is_safe=True,
+        requires_network=False,
+    ),
+    "ToolSearch": ToolMetadata(
+        name="ToolSearch",
+        description="Search for available tools by keyword or name",
+        category="discovery",
+        parameters={"query": "Search query for tools"},
+        examples=["Find tools for file operations"],
+        is_safe=True,
+        requires_network=False,
+    ),
+    "AskUserQuestion": ToolMetadata(
+        name="AskUserQuestion",
+        description="Ask the user for input or clarification",
+        category="interaction",
+        parameters={"question": "Question to ask", "options": "Available choices"},
+        examples=["Ask user to choose between approaches"],
+        is_safe=True,
+        requires_network=False,
+    ),
+    "CronCreate": ToolMetadata(
+        name="CronCreate",
+        description="Create a scheduled recurring task",
+        category="scheduling",
+        parameters={"schedule": "Cron schedule expression", "command": "Command to run"},
+        examples=["Schedule a daily health check"],
+        is_safe=False,
+        requires_network=False,
+    ),
+    "CronDelete": ToolMetadata(
+        name="CronDelete",
+        description="Delete a scheduled task",
+        category="scheduling",
+        parameters={"cronId": "ID of the cron job to delete"},
+        examples=["Remove a scheduled task"],
+        is_safe=True,
+        requires_network=False,
+    ),
+    "CronList": ToolMetadata(
+        name="CronList",
+        description="List all scheduled tasks",
+        category="scheduling",
+        parameters={},
+        examples=["List all active cron jobs"],
+        is_safe=True,
+        requires_network=False,
+    ),
+    "RemoteTrigger": ToolMetadata(
+        name="RemoteTrigger",
+        description="Trigger remote agent execution",
+        category="scheduling",
+        parameters={"trigger": "Trigger configuration"},
+        examples=["Trigger a remote agent to run a task"],
+        is_safe=False,
+        requires_network=True,
+    ),
 }
+
+# Task is a backward-compatible alias for Agent -- share the same metadata
+TOOL_METADATA["Task"] = TOOL_METADATA["Agent"]
 
 
 @dataclass
@@ -389,13 +548,8 @@ class ToolManager:
                 ),
                 "session_configs": len(self.session_configs),
                 "tool_categories": {
-                    "file": len([t for t in TOOL_METADATA.values() if t.category == "file"]),
-                    "system": len([t for t in TOOL_METADATA.values() if t.category == "system"]),
-                    "web": len([t for t in TOOL_METADATA.values() if t.category == "web"]),
-                    "productivity": len(
-                        [t for t in TOOL_METADATA.values() if t.category == "productivity"]
-                    ),
-                    "agent": len([t for t in TOOL_METADATA.values() if t.category == "agent"]),
+                    category: len([t for t in TOOL_METADATA.values() if t.category == category])
+                    for category in sorted(set(t.category for t in TOOL_METADATA.values()))
                 },
             }
 

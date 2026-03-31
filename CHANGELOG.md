@@ -5,6 +5,37 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-03-31
+
+### Added
+
+- **Model Metadata**: Per-model context window sizes, default/max output token limits sourced from open-sourced Claude Code CLI
+- **Model Pricing Data**: Per-model pricing (input, output, cache read/write) for all supported models, sourced from Claude Code source
+- **Cost Tracker** (`src/cost_tracker.py`): New module for per-request and per-session cost estimation using authoritative pricing data
+  - Tracks input/output tokens, cache tokens, web search requests
+  - Per-model usage breakdown per session
+- **Retry Logic** (`src/retry.py`): New module implementing retry with exponential backoff and jitter
+  - Configurable max retries (default 10), base delay (500ms), max delay (30s)
+  - Model fallback: after 3 consecutive 529 (overloaded) errors, falls back from Opus to Sonnet
+  - Retryable status codes: 429, 529, 5xx, 401, 400
+- **New Tools**: Added 18 tools to match Claude Code's actual tool inventory:
+  - `Agent` (with `Task` as backward-compatible alias)
+  - `SendMessage`, `TaskCreate`, `TaskUpdate`, `TaskGet`, `TaskList`, `TaskOutput`, `TaskStop`
+  - `EnterPlanMode`, `ExitPlanMode`, `EnterWorktree`, `ExitWorktree`
+  - `ToolSearch`, `AskUserQuestion`
+  - `CronCreate`, `CronDelete`, `CronList`, `RemoteTrigger`
+- **Effort Level Support**: New `X-Claude-Effort` header (low, medium, high, max)
+- **Thinking Mode Support**: New `X-Claude-Thinking` header (adaptive, enabled, disabled)
+- **Max Tokens Validation**: Model-specific max_tokens validation and capping via `ParameterValidator.validate_max_tokens()`
+- **Model Fallback Map**: Automatic Opus-to-Sonnet fallback mapping for overload resilience
+
+### Changed
+
+- **Model List Updated**: Added `claude-sonnet-4-6` (latest) and re-added Claude 3.x models (`claude-3-7-sonnet-20250219`, `claude-3-5-sonnet-20241022`, `claude-3-5-haiku-20241022`) which are confirmed supported by Claude Code
+- **Default Model**: Changed from `claude-sonnet-4-5-20250929` to `claude-sonnet-4-6` (latest Sonnet)
+- **Tool Safety Classifications**: Updated based on Claude Code source -- `Bash` now marked as requiring permissions, `Agent`/`SendMessage`/`RemoteTrigger` marked as unsafe
+- **Default Disallowed Tools**: Added `SendMessage` and `RemoteTrigger` to default disallow list
+
 ## [2.4.2] - 2026-02-06
 
 ### Added

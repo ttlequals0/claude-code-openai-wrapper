@@ -51,9 +51,10 @@ from src.rate_limiter import (
     rate_limit_exceeded_handler,
     rate_limit_endpoint,
 )
-from src.constants import CLAUDE_MODELS, CLAUDE_TOOLS, DEFAULT_ALLOWED_TOOLS
+from src.constants import CLAUDE_MODELS, CLAUDE_TOOLS, DEFAULT_ALLOWED_TOOLS, SESSION_CLEANUP_INTERVAL_MINUTES
 from src.model_service import model_service
 from src.request_cache import request_cache
+from src.cost_tracker import cost_tracker, UsageRecord
 
 # Load environment variables
 load_dotenv()
@@ -210,7 +211,20 @@ async def lifespan(app: FastAPI):
     # Start session cleanup task
     session_manager.start_cleanup_task()
 
+    # Start cost tracker cleanup task (mirrors session cleanup interval)
+    async def cost_cleanup_loop():
+        try:
+            while True:
+                await asyncio.sleep(SESSION_CLEANUP_INTERVAL_MINUTES * 60)
+                await cost_tracker.cleanup_expired()
+        except asyncio.CancelledError:
+            pass
+
+    cost_cleanup_task = asyncio.get_running_loop().create_task(cost_cleanup_loop())
+
     yield
+
+    cost_cleanup_task.cancel()
 
     # Cleanup on shutdown
     logger.info("Shutting down session manager...")
@@ -410,6 +424,57 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     return JSONResponse(status_code=422, content=error_response)
 
 
+def _build_claude_options(
+    request: ChatCompletionRequest,
+    claude_headers: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build validated Claude SDK options from a request and optional headers.
+
+    Shared by both the streaming and non-streaming code paths.
+    """
+    claude_options = request.to_claude_options()
+
+    if claude_headers:
+        claude_options.update(claude_headers)
+
+    if claude_options.get("model"):
+        ParameterValidator.validate_model(claude_options["model"])
+
+    if request.max_tokens and claude_options.get("model"):
+        validated = ParameterValidator.validate_max_tokens(
+            claude_options["model"], request.max_tokens
+        )
+        if validated is not None:
+            claude_options["max_tokens"] = validated
+
+    if not request.enable_tools:
+        claude_options["disallowed_tools"] = CLAUDE_TOOLS
+        claude_options["max_turns"] = 1
+        logger.info("Tools disabled (default behavior for OpenAI compatibility)")
+    else:
+        claude_options["allowed_tools"] = DEFAULT_ALLOWED_TOOLS
+        claude_options["permission_mode"] = "bypassPermissions"
+        logger.info(f"Tools enabled by user request: {DEFAULT_ALLOWED_TOOLS}")
+
+    return claude_options
+
+
+def _run_completion_kwargs(claude_options: Dict[str, Any], prompt: str, system_prompt: Optional[str], stream: bool) -> Dict[str, Any]:
+    """Extract run_completion keyword arguments from claude_options."""
+    return {
+        "prompt": prompt,
+        "system_prompt": system_prompt,
+        "model": claude_options.get("model"),
+        "max_turns": claude_options.get("max_turns", 10),
+        "allowed_tools": claude_options.get("allowed_tools"),
+        "disallowed_tools": claude_options.get("disallowed_tools"),
+        "permission_mode": claude_options.get("permission_mode"),
+        "effort": claude_options.get("effort"),
+        "thinking": claude_options.get("thinking"),
+        "stream": stream,
+    }
+
+
 async def generate_streaming_response(
     request: ChatCompletionRequest, request_id: str, claude_headers: Optional[Dict[str, Any]] = None
 ) -> AsyncGenerator[str, None]:
@@ -449,29 +514,7 @@ async def generate_streaming_response(
         if system_prompt:
             system_prompt = MessageAdapter.filter_content(system_prompt)
 
-        # Get Claude Agent SDK options from request
-        claude_options = request.to_claude_options()
-
-        # Merge with Claude-specific headers if provided
-        if claude_headers:
-            claude_options.update(claude_headers)
-
-        # Validate model
-        if claude_options.get("model"):
-            ParameterValidator.validate_model(claude_options["model"])
-
-        # Handle tools - disabled by default for OpenAI compatibility
-        if not request.enable_tools:
-            # Disable all tools by using CLAUDE_TOOLS constant
-            claude_options["disallowed_tools"] = CLAUDE_TOOLS
-            claude_options["max_turns"] = 1  # Single turn for Q&A
-            logger.info("Tools disabled (default behavior for OpenAI compatibility)")
-        else:
-            # Enable tools - use default safe subset (Read, Glob, Grep, Bash, Write, Edit)
-            claude_options["allowed_tools"] = DEFAULT_ALLOWED_TOOLS
-            # Set permission mode to bypass prompts (required for API/headless usage)
-            claude_options["permission_mode"] = "bypassPermissions"
-            logger.info(f"Tools enabled by user request: {DEFAULT_ALLOWED_TOOLS}")
+        claude_options = _build_claude_options(request, claude_headers)
 
         # Run Claude Code
         chunks_buffer = []
@@ -480,14 +523,7 @@ async def generate_streaming_response(
         json_mode_buffer = []  # Buffer for JSON mode - accumulate all content
 
         async for chunk in claude_cli.run_completion(
-            prompt=prompt,
-            system_prompt=system_prompt,
-            model=claude_options.get("model"),
-            max_turns=claude_options.get("max_turns", 10),
-            allowed_tools=claude_options.get("allowed_tools"),
-            disallowed_tools=claude_options.get("disallowed_tools"),
-            permission_mode=claude_options.get("permission_mode"),
-            stream=True,
+            **_run_completion_kwargs(claude_options, prompt, system_prompt, stream=True),
         ):
             chunks_buffer.append(chunk)
 
@@ -681,6 +717,15 @@ async def generate_streaming_response(
             )
             logger.debug(f"Estimated usage: {usage_data}")
 
+            await cost_tracker.record_usage(
+                session_id=actual_session_id or request_id,
+                model=request.model,
+                usage=UsageRecord(
+                    input_tokens=token_usage["prompt_tokens"],
+                    output_tokens=token_usage["completion_tokens"],
+                ),
+            )
+
         # Send final chunk with finish reason and optionally usage data
         final_chunk = ChatCompletionStreamResponse(
             id=request_id,
@@ -795,41 +840,12 @@ async def chat_completions(
             if system_prompt:
                 system_prompt = MessageAdapter.filter_content(system_prompt)
 
-            # Get Claude Agent SDK options from request
-            claude_options = request_body.to_claude_options()
-
-            # Merge with Claude-specific headers
-            if claude_headers:
-                claude_options.update(claude_headers)
-
-            # Validate model
-            if claude_options.get("model"):
-                ParameterValidator.validate_model(claude_options["model"])
-
-            # Handle tools - disabled by default for OpenAI compatibility
-            if not request_body.enable_tools:
-                # Disable all tools by using CLAUDE_TOOLS constant
-                claude_options["disallowed_tools"] = CLAUDE_TOOLS
-                claude_options["max_turns"] = 1  # Single turn for Q&A
-                logger.info("Tools disabled (default behavior for OpenAI compatibility)")
-            else:
-                # Enable tools - use default safe subset (Read, Glob, Grep, Bash, Write, Edit)
-                claude_options["allowed_tools"] = DEFAULT_ALLOWED_TOOLS
-                # Set permission mode to bypass prompts (required for API/headless usage)
-                claude_options["permission_mode"] = "bypassPermissions"
-                logger.info(f"Tools enabled by user request: {DEFAULT_ALLOWED_TOOLS}")
+            claude_options = _build_claude_options(request_body, claude_headers)
 
             # Collect all chunks
             chunks = []
             async for chunk in claude_cli.run_completion(
-                prompt=prompt,
-                system_prompt=system_prompt,
-                model=claude_options.get("model"),
-                max_turns=claude_options.get("max_turns", 10),
-                allowed_tools=claude_options.get("allowed_tools"),
-                disallowed_tools=claude_options.get("disallowed_tools"),
-                permission_mode=claude_options.get("permission_mode"),
-                stream=False,
+                **_run_completion_kwargs(claude_options, prompt, system_prompt, stream=False),
             ):
                 chunks.append(chunk)
 
@@ -871,6 +887,15 @@ async def chat_completions(
             # Estimate tokens (rough approximation)
             prompt_tokens = MessageAdapter.estimate_tokens(prompt)
             completion_tokens = MessageAdapter.estimate_tokens(assistant_content)
+
+            await cost_tracker.record_usage(
+                session_id=actual_session_id or request_id,
+                model=request_body.model,
+                usage=UsageRecord(
+                    input_tokens=prompt_tokens,
+                    output_tokens=completion_tokens,
+                ),
+            )
 
             # Create response
             response = ChatCompletionResponse(
