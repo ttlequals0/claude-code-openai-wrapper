@@ -115,22 +115,24 @@ poetry run claude-wrapper
 
 ## Docker
 
-```bash
-# Build
-docker build -t claude-wrapper:latest .
+Pre-built image on Docker Hub: `ttlequals0/claude-code-openai-wrapper`
 
-# Run
+```bash
+# Pull and run
 docker run -d -p 8000:8000 \
   -v ~/.claude:/root/.claude \
   --name claude-wrapper \
-  claude-wrapper:latest
+  ttlequals0/claude-code-openai-wrapper:latest
 
 # With custom workspace
 docker run -d -p 8000:8000 \
   -v ~/.claude:/root/.claude \
   -v /path/to/project:/workspace \
   -e CLAUDE_CWD=/workspace \
-  claude-wrapper:latest
+  ttlequals0/claude-code-openai-wrapper:2.5.1
+
+# Or build locally
+docker build -t claude-wrapper:latest .
 ```
 
 Docker Compose:
@@ -139,7 +141,7 @@ Docker Compose:
 version: '3.8'
 services:
   claude-wrapper:
-    build: .
+    image: ttlequals0/claude-code-openai-wrapper:latest
     ports:
       - "8000:8000"
     volumes:
