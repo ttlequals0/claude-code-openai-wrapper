@@ -15,6 +15,7 @@ from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from dotenv import load_dotenv
+from src import __version__
 
 from src.models import (
     ChatCompletionRequest,
@@ -238,7 +239,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Claude Code OpenAI API Wrapper",
     description="OpenAI-compatible API for Claude Code",
-    version="1.0.0",
+    version=__version__,
     lifespan=lifespan,
 )
 
@@ -1133,645 +1134,708 @@ async def version_info(request: Request):
 @app.get("/", response_class=HTMLResponse)
 async def root():
     """Landing page with API documentation."""
-    from src import __version__
-
     auth_info = get_claude_code_auth_info()
     auth_method = auth_info.get("method", "unknown")
     auth_valid = auth_info.get("status", {}).get("valid", False)
     status_color = "#22c55e" if auth_valid else "#ef4444"
-    status_text = "Connected" if auth_valid else "Not Connected"
+    status_text = "Connected" if auth_valid else "Disconnected"
 
-    html_content = f"""
-    <!DOCTYPE html>
-    <html lang="en" data-theme="dark">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <meta name="color-scheme" content="light dark">
-        <title>Claude Code OpenAI Wrapper</title>
-        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
-        <style>
-            :root {{
-                --pico-font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-                --accent-color: #16a34a;
-            }}
-            /* Light mode colors */
-            [data-theme="light"] {{
-                --card-bg: #ffffff;
-                --subtle-bg: #f1f5f9;
-                --border-color: #e2e8f0;
-                --page-bg: #f8fafc;
-            }}
-            /* Dark mode colors */
-            [data-theme="dark"] {{
-                --card-bg: #1e293b;
-                --subtle-bg: #334155;
-                --border-color: #475569;
-                --page-bg: #0f172a;
-            }}
-            /* Page background */
-            body {{ background: var(--page-bg); }}
-            /* GLOBAL FIX: Remove Pico's default code styling everywhere */
-            code:not(pre code) {{
-                background: transparent !important;
-                padding: 0 !important;
-                border-radius: 0 !important;
-                color: inherit !important;
-            }}
-            /* Only style code green where we explicitly want it */
-            .green-code {{ color: var(--accent-color) !important; }}
-            /* Constrain page width - wider for modern screens */
-            .container {{
-                max-width: 1100px;
-                margin: 0 auto;
-                padding: 1.5rem 2rem;
-            }}
-            /* Override Pico article styling */
-            article {{
-                background: var(--card-bg);
-                border: 1px solid var(--border-color);
-                border-radius: 0.75rem;
-                margin-bottom: 1rem;
-                padding: 1rem 1.25rem;
-            }}
-            article header {{
-                padding: 0;
-                margin-bottom: 0.75rem;
-                background: transparent;
-                border: none;
-            }}
-            /* Section headers with icons - matches status-flex layout */
-            .section-header {{
-                display: flex;
-                align-items: center;
-                gap: 0.5rem;
-                margin-bottom: 0.75rem;
-            }}
-            .section-icon {{
-                width: 1rem;
-                height: 1rem;
-                color: var(--accent-color);
-                flex-shrink: 0;
-            }}
-            /* Status indicator */
-            .status-dot {{
-                width: 0.75rem;
-                height: 0.75rem;
-                border-radius: 50%;
-                display: inline-block;
-                animation: pulse 2s infinite;
-            }}
-            @keyframes pulse {{
-                0%, 100% {{ opacity: 1; }}
-                50% {{ opacity: 0.5; }}
-            }}
-            /* Method badges */
-            .badge {{
-                display: inline-block;
-                padding: 0.25rem 0.5rem;
-                font-size: 0.7rem;
-                font-weight: 700;
-                border-radius: 0.25rem;
-                text-transform: uppercase;
-            }}
-            .badge-post {{ background: rgba(34, 197, 94, 0.15); color: #16a34a; }}
-            .badge-get {{ background: rgba(59, 130, 246, 0.15); color: #2563eb; }}
-            /* Header layout */
-            .header-flex {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                gap: 1rem;
-                margin-bottom: 1rem;
-            }}
-            .header-left {{
-                display: flex;
-                align-items: center;
-                gap: 1rem;
-                flex-shrink: 0;
-            }}
-            .header-right {{
-                display: flex;
-                align-items: center;
-                gap: 0.75rem;
-                flex-shrink: 0;
-            }}
-            .icon-btn {{
-                padding: 0.5rem;
-                border-radius: 0.5rem;
-                background: var(--subtle-bg);
-                border: 1px solid var(--border-color);
-                cursor: pointer;
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                color: inherit;
-            }}
-            .icon-btn:hover {{ opacity: 0.8; }}
-            .icon-btn svg {{ width: 1.25rem; height: 1.25rem; }}
-            .version-badge {{
-                padding: 0.25rem 0.75rem;
-                background: var(--subtle-bg);
-                border: 1px solid var(--border-color);
-                border-radius: 0.5rem;
-                font-family: monospace;
-                font-size: 0.875rem;
-            }}
-            /* Logo container */
-            .logo-container {{
-                background: linear-gradient(135deg, #22c55e 0%, #0ea5e9 100%);
-                padding: 2px;
-                border-radius: 0.75rem;
-            }}
-            .logo-inner {{
-                background: var(--card-bg);
-                border-radius: calc(0.75rem - 2px);
-                padding: 0.75rem;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            }}
-            .logo-inner svg {{ width: 2rem; height: 2rem; color: #22c55e; }}
-            /* Endpoint list */
-            .endpoint-item {{
-                display: flex;
-                align-items: center;
-                gap: 0.75rem;
-                padding: 0.5rem 0;
-                border-bottom: 1px solid var(--pico-muted-border-color);
-            }}
-            .endpoint-item:last-child {{ border-bottom: none; }}
-            .endpoint-item code {{ flex: 1; }}
-            .endpoint-desc {{ color: var(--pico-muted-color); font-size: 0.85rem; }}
-            /* Details accordion styling */
-            details {{
-                border: 1px solid var(--border-color);
-                border-radius: 0.5rem;
-                margin-bottom: 0.4rem;
-                background: var(--subtle-bg);
-            }}
-            details summary {{
-                padding: 0.5rem 0.75rem;
-                display: flex;
-                align-items: center;
-                gap: 0.75rem;
-                cursor: pointer;
-                list-style: none;
-            }}
-            details summary::-webkit-details-marker {{ display: none; }}
-            details summary::after {{
-                content: "";
-                margin-left: auto;
-                width: 0.5rem;
-                height: 0.5rem;
-                border-right: 2px solid currentColor;
-                border-bottom: 2px solid currentColor;
-                transform: rotate(-45deg);
-                transition: transform 0.2s;
-            }}
-            details[open] summary::after {{ transform: rotate(45deg); }}
-            details .content {{ padding: 0 1rem 1rem; }}
-            details .content pre {{
-                margin: 0;
-                font-size: 0.875rem;
-                overflow-x: auto;
-            }}
-            /* Config grid */
-            .config-grid {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-                gap: 0.75rem;
-            }}
-            .config-item {{
-                padding: 0.75rem;
-                background: var(--subtle-bg);
-                border: 1px solid var(--border-color);
-                border-radius: 0.5rem;
-            }}
-            .config-item code {{ font-weight: 600; }}
-            .config-item p {{ margin: 0.25rem 0 0; font-size: 0.875rem; color: var(--pico-muted-color); }}
-            /* Footer */
-            footer nav {{
-                display: flex;
-                justify-content: center;
-                gap: 2rem;
-            }}
-            footer a {{
-                display: flex;
-                align-items: center;
-                gap: 0.5rem;
-            }}
-            footer svg {{ width: 1rem; height: 1rem; }}
-            /* Quick start */
-            .quickstart-wrapper {{ position: relative; }}
-            .copy-btn {{
-                position: absolute;
-                top: 0.5rem;
-                right: 0.5rem;
-                padding: 0.5rem;
-                background: var(--subtle-bg);
-                border: 1px solid var(--border-color);
-                border-radius: 0.5rem;
-                cursor: pointer;
-                z-index: 1;
-                color: inherit;
-            }}
-            .copy-btn:hover {{ opacity: 0.8; }}
-            .copy-btn svg {{ width: 1rem; height: 1rem; }}
-            .hidden {{ display: none !important; }}
-            /* Shiki code styling */
-            .shiki {{ padding: 1rem; border-radius: 0.5rem; overflow-x: auto; }}
-            .shiki code {{ white-space: pre-wrap; word-break: break-word; }}
-            /* Status card layout */
-            .status-flex {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                flex-wrap: wrap;
-                gap: 1rem;
-            }}
-            .status-left {{
-                display: flex;
-                align-items: center;
-                gap: 0.75rem;
-            }}
-            .auth-badge {{
-                padding: 0.25rem 0.75rem;
-                background: var(--subtle-bg);
-                border: 1px solid var(--border-color);
-                border-radius: 1rem;
-                font-size: 0.875rem;
-            }}
-        </style>
-        <script type="module">
-            import {{ codeToHtml }} from 'https://esm.sh/shiki@3.0.0';
+    html_content = f"""<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light dark">
+    <title>Claude Code OpenAI Wrapper</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        :root {{
+            --font-sans: 'DM Sans', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }}
+        [data-theme="dark"] {{
+            --bg: #111111;
+            --surface: #1a1a1a;
+            --surface-alt: #222222;
+            --border: #2a2a2a;
+            --text: #e0e0e0;
+            --text-muted: #888888;
+            --accent: #3b82f6;
+            --code-bg: #161616;
+        }}
+        [data-theme="light"] {{
+            --bg: #f5f5f4;
+            --surface: #ffffff;
+            --surface-alt: #fafaf9;
+            --border: #e5e5e5;
+            --text: #1a1a1a;
+            --text-muted: #666666;
+            --accent: #2563eb;
+            --code-bg: #f5f5f4;
+        }}
+        html {{ font-size: 15px; }}
+        body {{
+            font-family: var(--font-sans);
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+        }}
+        a {{ color: var(--accent); text-decoration: none; }}
+        a:hover {{ text-decoration: underline; }}
+        code, pre {{ font-family: var(--font-mono); }}
+        .wrap {{
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 2.5rem 1.5rem;
+        }}
+        .hdr {{
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+        }}
+        .hdr h1 {{
+            font-size: 1.4rem;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+        }}
+        .hdr-right {{
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }}
+        .ver {{
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }}
+        .ibtn {{
+            width: 2rem;
+            height: 2rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface);
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: color 0.15s;
+        }}
+        .ibtn:hover {{ color: var(--text); }}
+        .ibtn svg {{ width: 1rem; height: 1rem; }}
+        .status-bar {{
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 2rem;
+            font-size: 0.85rem;
+        }}
+        .status-dot {{
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }}
+        .status-bar .sep {{
+            width: 1px;
+            height: 1rem;
+            background: var(--border);
+        }}
+        .status-bar code {{
+            font-size: 0.8rem;
+            color: var(--accent);
+        }}
+        .section {{
+            margin-bottom: 2rem;
+        }}
+        .section-title {{
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            margin-bottom: 0.5rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }}
+        .qs {{
+            position: relative;
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+        }}
+        .qs .copy-btn {{
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            padding: 0.35rem;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            cursor: pointer;
+            color: var(--text-muted);
+            z-index: 1;
+            transition: color 0.15s;
+        }}
+        .qs .copy-btn:hover {{ color: var(--text); }}
+        .qs .copy-btn svg {{ width: 0.85rem; height: 0.85rem; display: block; }}
+        .shiki {{ padding: 1rem; border-radius: 0; overflow-x: auto; }}
+        .shiki code {{ white-space: pre-wrap; word-break: break-word; font-size: 0.8rem; }}
+        .hidden {{ display: none !important; }}
+        .ep-group {{ margin-bottom: 1.25rem; }}
+        .ep-group-label {{
+            font-size: 0.7rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+            padding: 0.35rem 0;
+            margin-bottom: 0.25rem;
+        }}
+        .ep {{
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.45rem 0.5rem;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            transition: background 0.1s;
+        }}
+        .ep:hover {{ background: var(--surface-alt); }}
+        .ep .method {{
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            font-weight: 500;
+            width: 3.2rem;
+            text-align: center;
+            padding: 0.2rem 0;
+            border-radius: 3px;
+            flex-shrink: 0;
+        }}
+        .m-get {{ background: rgba(59,130,246,0.12); color: #60a5fa; }}
+        .m-post {{ background: rgba(245,158,11,0.12); color: #fbbf24; }}
+        .m-delete {{ background: rgba(239,68,68,0.12); color: #f87171; }}
+        [data-theme="light"] .m-get {{ background: rgba(37,99,235,0.1); color: #2563eb; }}
+        [data-theme="light"] .m-post {{ background: rgba(217,119,6,0.1); color: #b45309; }}
+        [data-theme="light"] .m-delete {{ background: rgba(220,38,38,0.1); color: #dc2626; }}
+        .ep .path {{
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            flex: 1;
+        }}
+        .ep .desc {{
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            text-align: right;
+            flex-shrink: 0;
+        }}
+        details.ep-detail {{
+            border-radius: 6px;
+        }}
+        details.ep-detail summary {{
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.45rem 0.5rem;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            list-style: none;
+            transition: background 0.1s;
+        }}
+        details.ep-detail summary::-webkit-details-marker {{ display: none; }}
+        details.ep-detail summary:hover {{ background: var(--surface-alt); }}
+        details.ep-detail summary::after {{
+            content: "";
+            width: 0.4rem;
+            height: 0.4rem;
+            border-right: 1.5px solid var(--text-muted);
+            border-bottom: 1.5px solid var(--text-muted);
+            transform: rotate(-45deg);
+            transition: transform 0.15s;
+            flex-shrink: 0;
+        }}
+        details.ep-detail[open] summary::after {{ transform: rotate(45deg); }}
+        details.ep-detail .detail-body {{
+            margin: 0.25rem 0 0.5rem 4.5rem;
+            padding: 0.75rem;
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow-x: auto;
+        }}
+        details.ep-detail .detail-body pre {{
+            margin: 0;
+            font-size: 0.8rem;
+        }}
+        .btn-sm {{
+            font-family: var(--font-sans);
+            font-size: 0.75rem;
+            font-weight: 500;
+            padding: 0.35rem 0.75rem;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--surface);
+            color: var(--text);
+            cursor: pointer;
+            transition: background 0.15s;
+        }}
+        .btn-sm:hover {{ background: var(--surface-alt); }}
+        .ftr {{
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            gap: 1rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--border);
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }}
+        .ftr-links {{
+            display: flex;
+            gap: 1.25rem;
+        }}
+        .ftr-links a {{ color: var(--text-muted); }}
+        .ftr-links a:hover {{ color: var(--text); text-decoration: none; }}
+        .ftr-auth {{
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+        }}
+    </style>
+    <script type="module">
+        import {{ codeToHtml }} from 'https://esm.sh/shiki@3.0.0';
+        const lightTheme = 'github-light';
+        const darkTheme = 'github-dark';
+        function isDark() {{ return document.documentElement.getAttribute('data-theme') === 'dark'; }}
 
-            const lightTheme = 'github-light';
-            const darkTheme = 'github-dark';
-
-            function isDark() {{
-                return document.documentElement.getAttribute('data-theme') === 'dark';
+        async function highlightJson(json, targetId) {{
+            const code = typeof json === 'string' ? json : JSON.stringify(json, null, 2);
+            const theme = isDark() ? darkTheme : lightTheme;
+            try {{
+                const html = await codeToHtml(code, {{ lang: 'json', theme }});
+                document.getElementById(targetId).innerHTML = html;
+            }} catch (e) {{
+                document.getElementById(targetId).textContent = 'Error: ' + e.message;
             }}
+        }}
 
-            async function highlightJson(json, targetId) {{
-                const code = typeof json === 'string' ? json : JSON.stringify(json, null, 2);
-                const theme = isDark() ? darkTheme : lightTheme;
-                try {{
-                    const html = await codeToHtml(code, {{ lang: 'json', theme }});
-                    document.getElementById(targetId).innerHTML = html;
-                }} catch (e) {{
-                    document.getElementById(targetId).innerHTML = '<pre style="color:red;">Error: ' + e.message + '</pre>';
-                }}
-            }}
-
-            // Lazy load data when details opens
-            document.querySelectorAll('details[data-endpoint]').forEach(details => {{
-                details.addEventListener('toggle', async () => {{
-                    if (details.open) {{
-                        const id = details.id;
-                        const endpoint = details.dataset.endpoint;
-                        const dataContainer = document.getElementById('data-' + id);
-                        const loader = document.getElementById('loader-' + id);
-                        if (dataContainer.innerHTML === '' || dataContainer.dataset.theme !== (isDark() ? 'dark' : 'light')) {{
-                            loader.classList.remove('hidden');
-                            try {{
-                                const response = await fetch(endpoint);
-                                const json = await response.json();
-                                await highlightJson(json, 'data-' + id);
-                                dataContainer.dataset.theme = isDark() ? 'dark' : 'light';
-                            }} catch (e) {{
-                                dataContainer.innerHTML = '<span style="color:red;">Error: ' + e.message + '</span>';
-                            }}
-                            loader.classList.add('hidden');
-                        }}
-                    }}
-                }});
-            }});
-
-            // Re-highlight on theme change
-            window.addEventListener('themeChanged', async () => {{
-                await highlightQuickstart();
-                document.querySelectorAll('details[open][data-endpoint]').forEach(async details => {{
+        document.querySelectorAll('details[data-endpoint]').forEach(details => {{
+            details.addEventListener('toggle', async () => {{
+                if (details.open) {{
                     const id = details.id;
                     const endpoint = details.dataset.endpoint;
                     const dataContainer = document.getElementById('data-' + id);
-                    if (dataContainer && dataContainer.innerHTML) {{
-                        const response = await fetch(endpoint);
-                        const json = await response.json();
-                        await highlightJson(json, 'data-' + id);
-                        dataContainer.dataset.theme = isDark() ? 'dark' : 'light';
+                    const loader = document.getElementById('loader-' + id);
+                    if (dataContainer.innerHTML === '' || dataContainer.dataset.theme !== (isDark() ? 'dark' : 'light')) {{
+                        loader.classList.remove('hidden');
+                        try {{
+                            const response = await fetch(endpoint);
+                            const json = await response.json();
+                            await highlightJson(json, 'data-' + id);
+                            dataContainer.dataset.theme = isDark() ? 'dark' : 'light';
+                        }} catch (e) {{
+                            dataContainer.textContent = 'Error: ' + e.message;
+                        }}
+                        loader.classList.add('hidden');
                     }}
-                }});
+                }}
             }});
+        }});
 
-            const quickstartCode = `curl -X POST http://localhost:8000/v1/chat/completions \\\\
+        window.addEventListener('themeChanged', async () => {{
+            await highlightQuickstart();
+            document.querySelectorAll('details[open][data-endpoint]').forEach(async details => {{
+                const id = details.id;
+                const endpoint = details.dataset.endpoint;
+                const dataContainer = document.getElementById('data-' + id);
+                if (dataContainer && dataContainer.innerHTML) {{
+                    const response = await fetch(endpoint);
+                    const json = await response.json();
+                    await highlightJson(json, 'data-' + id);
+                    dataContainer.dataset.theme = isDark() ? 'dark' : 'light';
+                }}
+            }});
+        }});
+
+        const quickstartCode = `curl -X POST http://localhost:8000/v1/chat/completions \\\\
   -H "Content-Type: application/json" \\\\
   -d '{{"model": "claude-sonnet-4-5-20250929", "messages": [{{"role": "user", "content": "Hello!"}}]}}'`;
 
-            async function highlightQuickstart() {{
-                const theme = isDark() ? darkTheme : lightTheme;
-                try {{
-                    const html = await codeToHtml(quickstartCode, {{ lang: 'bash', theme }});
-                    document.getElementById('quickstart-code').innerHTML = html;
-                }} catch (e) {{
-                    document.getElementById('quickstart-code').innerHTML = '<pre>' + quickstartCode + '</pre>';
-                }}
+        async function highlightQuickstart() {{
+            const theme = isDark() ? darkTheme : lightTheme;
+            try {{
+                const html = await codeToHtml(quickstartCode, {{ lang: 'bash', theme }});
+                document.getElementById('quickstart-code').innerHTML = html;
+            }} catch (e) {{
+                document.getElementById('quickstart-code').textContent = quickstartCode;
             }}
+        }}
+        window.highlightQuickstart = highlightQuickstart;
+        highlightQuickstart();
+    </script>
+    <script>
+        const quickstartText = 'curl -X POST http://localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d \\'{{"model": "claude-sonnet-4-5-20250929", "messages": [{{"role": "user", "content": "Hello!"}}]}}\\'';
 
-            window.highlightQuickstart = highlightQuickstart;
-            highlightQuickstart();
-        </script>
-        <script>
-            const quickstartText = 'curl -X POST http://localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d \\'{{"model": "claude-sonnet-4-5-20250929", "messages": [{{"role": "user", "content": "Hello!"}}]}}\\'';
-
-            function copyQuickstart() {{
-                if (navigator.clipboard && navigator.clipboard.writeText) {{
-                    navigator.clipboard.writeText(quickstartText).then(showCopySuccess).catch(fallbackCopy);
-                }} else {{
-                    fallbackCopy();
-                }}
+        function copyQuickstart() {{
+            if (navigator.clipboard && navigator.clipboard.writeText) {{
+                navigator.clipboard.writeText(quickstartText).then(showCopySuccess).catch(fallbackCopy);
+            }} else {{ fallbackCopy(); }}
+        }}
+        function fallbackCopy() {{
+            const ta = document.createElement('textarea');
+            ta.value = quickstartText;
+            ta.style.cssText = 'position:fixed;opacity:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try {{ document.execCommand('copy'); showCopySuccess(); }} catch (e) {{}}
+            document.body.removeChild(ta);
+        }}
+        function showCopySuccess() {{
+            document.getElementById('copy-icon').classList.add('hidden');
+            document.getElementById('check-icon').classList.remove('hidden');
+            setTimeout(() => {{
+                document.getElementById('copy-icon').classList.remove('hidden');
+                document.getElementById('check-icon').classList.add('hidden');
+            }}, 2000);
+        }}
+        function toggleTheme() {{
+            const html = document.documentElement;
+            const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            html.setAttribute('data-theme', next);
+            localStorage.setItem('theme', next);
+            document.getElementById('sun-icon').classList.toggle('hidden', next === 'dark');
+            document.getElementById('moon-icon').classList.toggle('hidden', next !== 'dark');
+            window.dispatchEvent(new Event('themeChanged'));
+        }}
+        async function refreshModels() {{
+            const el = document.getElementById('data-models-refresh');
+            el.textContent = 'Refreshing...';
+            try {{
+                const r = await fetch('/v1/models/refresh', {{ method: 'POST' }});
+                const d = await r.json();
+                el.textContent = JSON.stringify(d, null, 2);
+            }} catch (e) {{
+                el.textContent = 'Error: ' + e.message;
             }}
-
-            function fallbackCopy() {{
-                const textarea = document.createElement('textarea');
-                textarea.value = quickstartText;
-                textarea.style.position = 'fixed';
-                textarea.style.opacity = '0';
-                document.body.appendChild(textarea);
-                textarea.select();
-                try {{ document.execCommand('copy'); showCopySuccess(); }} catch (e) {{ console.error('Copy failed:', e); }}
-                document.body.removeChild(textarea);
+        }}
+        document.addEventListener('DOMContentLoaded', () => {{
+            const saved = localStorage.getItem('theme');
+            if (saved) {{
+                document.documentElement.setAttribute('data-theme', saved);
+                document.getElementById('sun-icon').classList.toggle('hidden', saved === 'dark');
+                document.getElementById('moon-icon').classList.toggle('hidden', saved !== 'dark');
+            }} else {{
+                document.getElementById('sun-icon').classList.add('hidden');
             }}
+        }});
+    </script>
+</head>
+<body>
+<div class="wrap">
 
-            function showCopySuccess() {{
-                const copyIcon = document.getElementById('copy-icon');
-                const checkIcon = document.getElementById('check-icon');
-                copyIcon.classList.add('hidden');
-                checkIcon.classList.remove('hidden');
-                setTimeout(() => {{
-                    copyIcon.classList.remove('hidden');
-                    checkIcon.classList.add('hidden');
-                }}, 2000);
-            }}
+    <header class="hdr">
+        <h1>Claude Code OpenAI Wrapper</h1>
+        <div class="hdr-right">
+            <span class="ver">v{__version__}</span>
+            <button onclick="toggleTheme()" class="ibtn" title="Toggle theme">
+                <svg id="sun-icon" class="hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+                <svg id="moon-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+            </button>
+            <a href="https://github.com/ttlequals0/claude-code-openai-wrapper" target="_blank" rel="noopener noreferrer" class="ibtn" title="View on GitHub">
+                <svg fill="currentColor" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"/></svg>
+            </a>
+        </div>
+    </header>
 
-            function toggleTheme() {{
-                const html = document.documentElement;
-                const current = html.getAttribute('data-theme');
-                const next = current === 'dark' ? 'light' : 'dark';
-                html.setAttribute('data-theme', next);
-                localStorage.setItem('theme', next);
-                updateThemeIcon(next === 'dark');
-                window.dispatchEvent(new Event('themeChanged'));
-            }}
+    <div class="status-bar">
+        <span class="status-dot" style="background:{status_color};"></span>
+        <span>{status_text}</span>
+        <span class="sep"></span>
+        <span>Auth: <code>{auth_method}</code></span>
+    </div>
 
-            function updateThemeIcon(isDark) {{
-                document.getElementById('sun-icon').classList.toggle('hidden', isDark);
-                document.getElementById('moon-icon').classList.toggle('hidden', !isDark);
-            }}
+    <div class="section">
+        <div class="section-title">Quick Start</div>
+        <div class="qs">
+            <button onclick="copyQuickstart()" class="copy-btn" title="Copy to clipboard">
+                <svg id="copy-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                <svg id="check-icon" class="hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="color:#22c55e;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+            </button>
+            <div id="quickstart-code"></div>
+        </div>
+    </div>
 
-            async function refreshModels() {{
-                const resultDiv = document.getElementById('data-models-refresh');
-                resultDiv.innerHTML = '<small>Refreshing...</small>';
-                try {{
-                    const response = await fetch('/v1/models/refresh', {{ method: 'POST' }});
-                    const data = await response.json();
-                    const formatted = JSON.stringify(data, null, 2);
-                    resultDiv.innerHTML = '<pre style="background: var(--pico-code-background-color); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 13px;">' + formatted + '</pre>';
-                }} catch (error) {{
-                    resultDiv.innerHTML = '<span style="color: #ef4444;">Error: ' + error.message + '</span>';
-                }}
-            }}
+    <div class="section">
+        <div class="section-title">Endpoints</div>
 
-            document.addEventListener('DOMContentLoaded', () => {{
-                const saved = localStorage.getItem('theme');
-                if (saved) {{
-                    document.documentElement.setAttribute('data-theme', saved);
-                    updateThemeIcon(saved === 'dark');
-                }} else {{
-                    updateThemeIcon(true);
-                }}
-            }});
-        </script>
-    </head>
-    <body>
-        <main class="container">
-            <!-- Header -->
-            <header class="header-flex">
-                <div class="header-left">
-                    <div class="logo-container">
-                        <div class="logo-inner">
-                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
-                            </svg>
-                        </div>
-                    </div>
-                    <div>
-                        <h1 style="margin:0;">Claude Code OpenAI Wrapper</h1>
-                        <p style="margin:0;color:var(--pico-muted-color);">OpenAI-compatible API for Claude</p>
-                    </div>
+        <div class="ep-group">
+            <div class="ep-group-label">Core API</div>
+            <div class="ep">
+                <span class="method m-post">POST</span>
+                <span class="path">/v1/chat/completions</span>
+                <span class="desc">OpenAI-compatible chat</span>
+            </div>
+            <div class="ep">
+                <span class="method m-post">POST</span>
+                <span class="path">/v1/messages</span>
+                <span class="desc">Anthropic-compatible</span>
+            </div>
+        </div>
+
+        <div class="ep-group">
+            <div class="ep-group-label">Models</div>
+            <details id="models" data-endpoint="/v1/models" class="ep-detail">
+                <summary>
+                    <span class="method m-get">GET</span>
+                    <span class="path">/v1/models</span>
+                    <span class="desc">List available models</span>
+                </summary>
+                <div class="detail-body">
+                    <small id="loader-models" class="hidden">Loading...</small>
+                    <div id="data-models"></div>
                 </div>
-                <div class="header-right">
-                    <span class="version-badge">v{__version__}</span>
-                    <button onclick="toggleTheme()" class="icon-btn" title="Toggle theme">
-                        <svg id="sun-icon" class="hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
-                        </svg>
-                        <svg id="moon-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
-                        </svg>
-                    </button>
-                    <a href="https://github.com/aaronlippold/claude-code-openai-wrapper" target="_blank" rel="noopener noreferrer" class="icon-btn" title="View on GitHub">
-                        <svg fill="currentColor" viewBox="0 0 24 24">
-                            <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"/>
-                        </svg>
-                    </a>
+            </details>
+            <details id="models-status" data-endpoint="/v1/models/status" class="ep-detail">
+                <summary>
+                    <span class="method m-get">GET</span>
+                    <span class="path">/v1/models/status</span>
+                    <span class="desc">Model service status</span>
+                </summary>
+                <div class="detail-body">
+                    <small id="loader-models-status" class="hidden">Loading...</small>
+                    <div id="data-models-status"></div>
                 </div>
-            </header>
-
-            <!-- Status Card -->
-            <article>
-                <div class="status-flex">
-                    <div class="status-left">
-                        <span class="status-dot" style="background-color: {status_color};"></span>
-                        <strong>{status_text}</strong>
-                    </div>
-                    <span class="auth-badge">Auth: <code class="green-code">{auth_method}</code></span>
+            </details>
+            <details id="models-refresh" class="ep-detail">
+                <summary>
+                    <span class="method m-post">POST</span>
+                    <span class="path">/v1/models/refresh</span>
+                    <span class="desc">Refresh from API</span>
+                </summary>
+                <div class="detail-body">
+                    <p style="margin-bottom:0.5rem;font-size:0.8rem;color:var(--text-muted);">Requires api_key auth with ANTHROPIC_API_KEY set.</p>
+                    <button onclick="refreshModels()" class="btn-sm">Refresh Models</button>
+                    <div id="data-models-refresh" style="margin-top:0.5rem;"></div>
                 </div>
-            </article>
+            </details>
+        </div>
 
-            <!-- Quick Start -->
-            <article>
-                <div class="section-header">
-                    <svg class="section-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                    <strong>Quick Start</strong>
+        <div class="ep-group">
+            <div class="ep-group-label">Sessions</div>
+            <details id="sessions" data-endpoint="/v1/sessions" class="ep-detail">
+                <summary>
+                    <span class="method m-get">GET</span>
+                    <span class="path">/v1/sessions</span>
+                    <span class="desc">List active sessions</span>
+                </summary>
+                <div class="detail-body">
+                    <small id="loader-sessions" class="hidden">Loading...</small>
+                    <div id="data-sessions"></div>
                 </div>
-                <div class="quickstart-wrapper">
-                    <button onclick="copyQuickstart()" class="copy-btn" title="Copy to clipboard">
-                        <svg id="copy-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
-                        </svg>
-                        <svg id="check-icon" class="hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="color:#22c55e;">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                        </svg>
-                    </button>
-                    <div id="quickstart-code"></div>
+            </details>
+            <details id="sessions-stats" data-endpoint="/v1/sessions/stats" class="ep-detail">
+                <summary>
+                    <span class="method m-get">GET</span>
+                    <span class="path">/v1/sessions/stats</span>
+                    <span class="desc">Session statistics</span>
+                </summary>
+                <div class="detail-body">
+                    <small id="loader-sessions-stats" class="hidden">Loading...</small>
+                    <div id="data-sessions-stats"></div>
                 </div>
-            </article>
+            </details>
+            <div class="ep">
+                <span class="method m-get">GET</span>
+                <span class="path">/v1/sessions/{{id}}</span>
+                <span class="desc">Get session by ID</span>
+            </div>
+            <div class="ep">
+                <span class="method m-delete">DELETE</span>
+                <span class="path">/v1/sessions/{{id}}</span>
+                <span class="desc">Delete session</span>
+            </div>
+        </div>
 
-            <!-- API Endpoints -->
-            <article>
-                <div class="section-header">
-                    <svg class="section-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                    <strong>API Endpoints</strong>
+        <div class="ep-group">
+            <div class="ep-group-label">Tools</div>
+            <details id="tools" data-endpoint="/v1/tools" class="ep-detail">
+                <summary>
+                    <span class="method m-get">GET</span>
+                    <span class="path">/v1/tools</span>
+                    <span class="desc">List available tools</span>
+                </summary>
+                <div class="detail-body">
+                    <small id="loader-tools" class="hidden">Loading...</small>
+                    <div id="data-tools"></div>
                 </div>
-
-                <!-- Static POST endpoints -->
-                <div class="endpoint-item">
-                    <span class="badge badge-post">POST</span>
-                    <code>/v1/chat/completions</code>
-                    <span class="endpoint-desc">OpenAI-compatible chat</span>
+            </details>
+            <details id="tools-config" data-endpoint="/v1/tools/config" class="ep-detail">
+                <summary>
+                    <span class="method m-get">GET</span>
+                    <span class="path">/v1/tools/config</span>
+                    <span class="desc">Tool configuration</span>
+                </summary>
+                <div class="detail-body">
+                    <small id="loader-tools-config" class="hidden">Loading...</small>
+                    <div id="data-tools-config"></div>
                 </div>
-                <div class="endpoint-item">
-                    <span class="badge badge-post">POST</span>
-                    <code>/v1/messages</code>
-                    <span class="endpoint-desc">Anthropic-compatible</span>
+            </details>
+            <div class="ep">
+                <span class="method m-post">POST</span>
+                <span class="path">/v1/tools/config</span>
+                <span class="desc">Update tool config</span>
+            </div>
+            <details id="tools-stats" data-endpoint="/v1/tools/stats" class="ep-detail">
+                <summary>
+                    <span class="method m-get">GET</span>
+                    <span class="path">/v1/tools/stats</span>
+                    <span class="desc">Tool usage stats</span>
+                </summary>
+                <div class="detail-body">
+                    <small id="loader-tools-stats" class="hidden">Loading...</small>
+                    <div id="data-tools-stats"></div>
                 </div>
+            </details>
+        </div>
 
-                <!-- Expandable GET endpoints -->
-                <details id="models" data-endpoint="/v1/models" name="endpoints">
-                    <summary>
-                        <span class="badge badge-get">GET</span>
-                        <code>/v1/models</code>
-                        <span class="endpoint-desc">List models</span>
-                    </summary>
-                    <div class="content">
-                        <small id="loader-models" class="hidden">Loading...</small>
-                        <div id="data-models"></div>
-                    </div>
-                </details>
-
-                <details id="models-status" data-endpoint="/v1/models/status" name="endpoints">
-                    <summary>
-                        <span class="badge badge-get">GET</span>
-                        <code>/v1/models/status</code>
-                        <span class="endpoint-desc">Model service status</span>
-                    </summary>
-                    <div class="content">
-                        <small id="loader-models-status" class="hidden">Loading...</small>
-                        <div id="data-models-status"></div>
-                    </div>
-                </details>
-
-                <details id="models-refresh" name="endpoints">
-                    <summary>
-                        <span class="badge badge-post">POST</span>
-                        <code>/v1/models/refresh</code>
-                        <span class="endpoint-desc">Refresh models from API</span>
-                    </summary>
-                    <div class="content">
-                        <p style="margin-bottom: 8px; color: #6b7280;">Requires <code>CLAUDE_AUTH_METHOD=api_key</code> with <code>ANTHROPIC_API_KEY</code> set.</p>
-                        <button onclick="refreshModels()" style="background: #10b981; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 14px;">Refresh Models</button>
-                        <div id="data-models-refresh" style="margin-top: 12px;"></div>
-                    </div>
-                </details>
-
-                <details id="auth" data-endpoint="/v1/auth/status" name="endpoints">
-                    <summary>
-                        <span class="badge badge-get">GET</span>
-                        <code>/v1/auth/status</code>
-                        <span class="endpoint-desc">Auth status</span>
-                    </summary>
-                    <div class="content">
-                        <small id="loader-auth" class="hidden">Loading...</small>
-                        <div id="data-auth"></div>
-                    </div>
-                </details>
-
-                <details id="sessions" data-endpoint="/v1/sessions" name="endpoints">
-                    <summary>
-                        <span class="badge badge-get">GET</span>
-                        <code>/v1/sessions</code>
-                        <span class="endpoint-desc">Active sessions</span>
-                    </summary>
-                    <div class="content">
-                        <small id="loader-sessions" class="hidden">Loading...</small>
-                        <div id="data-sessions"></div>
-                    </div>
-                </details>
-
-                <details id="health" data-endpoint="/health" name="endpoints">
-                    <summary>
-                        <span class="badge badge-get">GET</span>
-                        <code>/health</code>
-                        <span class="endpoint-desc">Health check</span>
-                    </summary>
-                    <div class="content">
-                        <small id="loader-health" class="hidden">Loading...</small>
-                        <div id="data-health"></div>
-                    </div>
-                </details>
-
-                <details id="version" data-endpoint="/version" name="endpoints">
-                    <summary>
-                        <span class="badge badge-get">GET</span>
-                        <code>/version</code>
-                        <span class="endpoint-desc">API version</span>
-                    </summary>
-                    <div class="content">
-                        <small id="loader-version" class="hidden">Loading...</small>
-                        <div id="data-version"></div>
-                    </div>
-                </details>
-            </article>
-
-            <!-- Configuration -->
-            <article>
-                <div class="section-header">
-                    <svg class="section-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-                    <strong>Configuration</strong>
+        <div class="ep-group">
+            <div class="ep-group-label">MCP Servers</div>
+            <details id="mcp-servers" data-endpoint="/v1/mcp/servers" class="ep-detail">
+                <summary>
+                    <span class="method m-get">GET</span>
+                    <span class="path">/v1/mcp/servers</span>
+                    <span class="desc">List MCP servers</span>
+                </summary>
+                <div class="detail-body">
+                    <small id="loader-mcp-servers" class="hidden">Loading...</small>
+                    <div id="data-mcp-servers"></div>
                 </div>
-                <p>Set <code>CLAUDE_AUTH_METHOD</code> to choose authentication:</p>
-                <div class="config-grid">
-                    <div class="config-item">
-                        <code class="green-code">cli</code>
-                        <p>Claude CLI auth</p>
-                    </div>
-                    <div class="config-item">
-                        <code class="green-code">api_key</code>
-                        <p>ANTHROPIC_API_KEY</p>
-                    </div>
-                    <div class="config-item">
-                        <code class="green-code">bedrock</code>
-                        <p>AWS Bedrock</p>
-                    </div>
-                    <div class="config-item">
-                        <code class="green-code">vertex</code>
-                        <p>Google Vertex AI</p>
-                    </div>
+            </details>
+            <div class="ep">
+                <span class="method m-post">POST</span>
+                <span class="path">/v1/mcp/servers</span>
+                <span class="desc">Register server</span>
+            </div>
+            <div class="ep">
+                <span class="method m-post">POST</span>
+                <span class="path">/v1/mcp/connect</span>
+                <span class="desc">Connect to server</span>
+            </div>
+            <div class="ep">
+                <span class="method m-post">POST</span>
+                <span class="path">/v1/mcp/disconnect</span>
+                <span class="desc">Disconnect server</span>
+            </div>
+            <details id="mcp-stats" data-endpoint="/v1/mcp/stats" class="ep-detail">
+                <summary>
+                    <span class="method m-get">GET</span>
+                    <span class="path">/v1/mcp/stats</span>
+                    <span class="desc">MCP statistics</span>
+                </summary>
+                <div class="detail-body">
+                    <small id="loader-mcp-stats" class="hidden">Loading...</small>
+                    <div id="data-mcp-stats"></div>
                 </div>
-            </article>
+            </details>
+        </div>
 
-            <!-- Footer -->
-            <footer>
-                <nav>
-                    <a href="/docs">
-                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-                        </svg>
-                        API Docs
-                    </a>
-                    <a href="/redoc">
-                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
-                        </svg>
-                        ReDoc
-                    </a>
-                </nav>
-            </footer>
-        </main>
-    </body>
-    </html>
-    """
+        <div class="ep-group">
+            <div class="ep-group-label">Cache</div>
+            <details id="cache-stats" data-endpoint="/v1/cache/stats" class="ep-detail">
+                <summary>
+                    <span class="method m-get">GET</span>
+                    <span class="path">/v1/cache/stats</span>
+                    <span class="desc">Cache statistics</span>
+                </summary>
+                <div class="detail-body">
+                    <small id="loader-cache-stats" class="hidden">Loading...</small>
+                    <div id="data-cache-stats"></div>
+                </div>
+            </details>
+            <div class="ep">
+                <span class="method m-post">POST</span>
+                <span class="path">/v1/cache/clear</span>
+                <span class="desc">Clear request cache</span>
+            </div>
+        </div>
+
+        <div class="ep-group">
+            <div class="ep-group-label">Auth / Debug</div>
+            <details id="auth" data-endpoint="/v1/auth/status" class="ep-detail">
+                <summary>
+                    <span class="method m-get">GET</span>
+                    <span class="path">/v1/auth/status</span>
+                    <span class="desc">Auth status</span>
+                </summary>
+                <div class="detail-body">
+                    <small id="loader-auth" class="hidden">Loading...</small>
+                    <div id="data-auth"></div>
+                </div>
+            </details>
+            <div class="ep">
+                <span class="method m-post">POST</span>
+                <span class="path">/v1/compatibility</span>
+                <span class="desc">Parameter compatibility check</span>
+            </div>
+            <div class="ep">
+                <span class="method m-post">POST</span>
+                <span class="path">/v1/debug/request</span>
+                <span class="desc">Debug request validation</span>
+            </div>
+        </div>
+
+        <div class="ep-group">
+            <div class="ep-group-label">System</div>
+            <details id="health" data-endpoint="/health" class="ep-detail">
+                <summary>
+                    <span class="method m-get">GET</span>
+                    <span class="path">/health</span>
+                    <span class="desc">Health check</span>
+                </summary>
+                <div class="detail-body">
+                    <small id="loader-health" class="hidden">Loading...</small>
+                    <div id="data-health"></div>
+                </div>
+            </details>
+            <details id="version" data-endpoint="/version" class="ep-detail">
+                <summary>
+                    <span class="method m-get">GET</span>
+                    <span class="path">/version</span>
+                    <span class="desc">API version</span>
+                </summary>
+                <div class="detail-body">
+                    <small id="loader-version" class="hidden">Loading...</small>
+                    <div id="data-version"></div>
+                </div>
+            </details>
+        </div>
+    </div>
+
+    <footer class="ftr">
+        <div class="ftr-links">
+            <a href="/docs">Swagger Docs</a>
+            <a href="/redoc">ReDoc</a>
+            <a href="https://github.com/ttlequals0/claude-code-openai-wrapper" target="_blank" rel="noopener noreferrer">GitHub</a>
+        </div>
+        <div class="ftr-auth">CLAUDE_AUTH_METHOD: cli | api_key | bedrock | vertex</div>
+    </footer>
+
+</div>
+</body>
+</html>"""
     return HTMLResponse(content=html_content)
 
 

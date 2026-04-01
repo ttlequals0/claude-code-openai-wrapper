@@ -5,6 +5,23 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1] - 2026-04-01
+
+### Fixed
+
+- **GitHub URL**: Corrected repository link from aaronlippold fork to ttlequals0/claude-code-openai-wrapper
+- **OpenAPI Version**: FastAPI docs version now uses dynamic `__version__` instead of hardcoded "1.0.0"
+
+### Changed
+
+- **Landing Page Redesign**: Complete UI overhaul replacing generic AI-generated aesthetics with a clean, utilitarian developer dashboard
+  - Dropped Pico CSS in favor of custom minimal CSS
+  - Typography: DM Sans headings, JetBrains Mono for code paths
+  - Muted neutral color palette with method-specific badge colors (blue GET, amber POST, red DELETE)
+  - Removed gradient logo container, pulsing animations, and decorative section icons
+- **Endpoint Documentation**: Landing page now lists all 25 endpoints grouped into 8 categories (Core API, Models, Sessions, Tools, MCP Servers, Cache, Auth/Debug, System) -- previously showed only 9
+- **Configuration Section**: Condensed from a full card into a compact footer line
+
 ## [2.5.0] - 2026-03-31
 
 ### Added
