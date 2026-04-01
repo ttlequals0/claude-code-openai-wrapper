@@ -1,13 +1,13 @@
 # Claude Code OpenAI API Wrapper
 
-An OpenAI API-compatible wrapper for Claude Code, powered by the Claude Agent SDK v0.1.18. Use Claude Code with any OpenAI client library.
+OpenAI API-compatible wrapper for Claude Code. Drop it in front of any OpenAI client library and talk to Claude instead.
 
 ## Version
 
 **Current:** 2.5.1
 
 What's new in 2.5.x:
-- Landing page redesigned with all 25 endpoints grouped by category
+- Landing page redesigned with all endpoints grouped by category
 - Model list updated from open-sourced Claude Code source (11 models, per-model metadata and pricing)
 - 33 tools tracked (up from 15), matching Claude Code's actual inventory
 - Cost tracking with authoritative per-model pricing
@@ -19,17 +19,7 @@ See [CHANGELOG.md](./CHANGELOG.md) for full history.
 
 ## Status
 
-Production ready. Core features working and tested:
-- Chat completions with Claude Agent SDK v0.1.18
-- Anthropic Messages API (`/v1/messages`)
-- Streaming and non-streaming responses
-- OpenAI SDK compatibility
-- Multi-provider auth (API key, Bedrock, Vertex AI, CLI)
-- System prompt support, model selection with validation
-- Tools disabled by default for speed; opt-in with `enable_tools: true`
-- Cost and token tracking
-- Session continuity across requests
-- Interactive landing page with API explorer
+Production ready. 566 tests passing. Streaming works. Sessions work. JSON mode works. Tools are off by default for speed -- pass `enable_tools: true` to turn them on. Auth supports API key, Bedrock, Vertex AI, and CLI.
 
 ## Quick Start
 
@@ -47,10 +37,10 @@ export ANTHROPIC_API_KEY=your-api-key
 poetry run uvicorn src.main:app --reload --port 8000
 
 # Test
-poetry run python test_endpoints.py
+poetry run pytest tests/
 ```
 
-Your OpenAI-compatible Claude Code API is now running on `http://localhost:8000`.
+Server is at `http://localhost:8000`. Point your OpenAI client there.
 
 ## Prerequisites
 
@@ -64,7 +54,7 @@ Your OpenAI-compatible Claude Code API is now running on `http://localhost:8000`
    - `claude auth login` (CLI auth)
    - AWS Bedrock or Google Vertex AI (see Configuration)
 
-The Claude Code CLI is bundled with the SDK. No separate Node.js or npm install needed.
+The Claude Code CLI comes bundled with the SDK. No Node.js or npm needed.
 
 ## Installation
 
@@ -87,8 +77,9 @@ Edit `.env`:
 # API_KEY=your-optional-api-key
 
 PORT=8000
-MAX_TIMEOUT=600000        # milliseconds
-# CLAUDE_CWD=/path/to/workspace  # defaults to isolated temp dir
+MAX_TIMEOUT=600000           # milliseconds (10 min default)
+# CLAUDE_CWD=/path/to/workspace   # defaults to isolated temp dir
+# DEFAULT_MODEL=claude-sonnet-4-6  # override default model
 ```
 
 ### Working Directory
@@ -110,7 +101,7 @@ Per-IP rate limiting is built in. Defaults:
 | `/v1/auth/status` | 10/min |
 | `/health` | 30/min |
 
-Configure via environment variables: `RATE_LIMIT_ENABLED`, `RATE_LIMIT_CHAT_PER_MINUTE`, etc.
+Override with env vars: `RATE_LIMIT_ENABLED`, `RATE_LIMIT_CHAT_PER_MINUTE`, etc.
 
 ## Running the Server
 
@@ -119,7 +110,7 @@ Configure via environment variables: `RATE_LIMIT_ENABLED`, `RATE_LIMIT_CHAT_PER_
 poetry run uvicorn src.main:app --reload --port 8000
 
 # Production
-poetry run python main.py
+poetry run claude-wrapper
 ```
 
 ## Docker
@@ -155,17 +146,21 @@ services:
       - ~/.claude:/root/.claude
     environment:
       - PORT=8000
-      - MAX_TIMEOUT=600
+      - MAX_TIMEOUT=600000
     restart: unless-stopped
 ```
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PORT` | Server port | `8000` |
-| `MAX_TIMEOUT` | Request timeout (seconds) | `300` |
+| `MAX_TIMEOUT` | Request timeout (ms) | `600000` (10 min) |
 | `CLAUDE_CWD` | Working directory | temp dir |
 | `CLAUDE_AUTH_METHOD` | `cli`, `api_key`, `bedrock`, `vertex` | auto-detect |
 | `ANTHROPIC_API_KEY` | Direct API key | - |
+| `DEBUG_MODE` | Enable debug logging | `false` |
+| `CORS_ORIGINS` | Allowed CORS origins (JSON array) | `["*"]` |
+| `REQUEST_CACHE_ENABLED` | Enable request dedup cache | `false` |
+| `DEFAULT_MODEL` | Override default model | `claude-sonnet-4-6` |
 
 ## Usage Examples
 
@@ -224,7 +219,7 @@ for chunk in stream:
 
 ### Claude-specific headers
 
-Pass Claude SDK options via custom HTTP headers:
+Claude-specific options via HTTP headers:
 
 | Header | Values | Description |
 |--------|--------|-------------|
@@ -237,7 +232,7 @@ Pass Claude SDK options via custom HTTP headers:
 
 ## Supported Models
 
-All model IDs, context windows, and pricing sourced from the open-sourced Claude Code CLI.
+Model IDs, context windows, and pricing pulled from the open-sourced Claude Code CLI.
 
 ### Claude 4.6 (Latest)
 | Model | Context | Max Output | Input $/MTok | Output $/MTok |
@@ -268,7 +263,7 @@ All model IDs, context windows, and pricing sourced from the open-sourced Claude
 
 ## Session Continuity
 
-Maintain conversation context across requests by including a `session_id`:
+Pass a `session_id` to keep conversation context across requests:
 
 ```python
 # Start a conversation
@@ -286,7 +281,7 @@ response2 = client.chat.completions.create(
 )
 ```
 
-Sessions expire after 1 hour of inactivity. Manage them via:
+Sessions expire after 1 hour of inactivity. Management endpoints:
 - `GET /v1/sessions` -- list active sessions
 - `GET /v1/sessions/{id}` -- session details
 - `DELETE /v1/sessions/{id}` -- delete session
@@ -346,7 +341,7 @@ Sessions expire after 1 hour of inactivity. Manage them via:
 
 ## JSON Response Mode
 
-Force JSON output using the OpenAI-compatible `response_format` parameter:
+Set `response_format` to get JSON back:
 
 ```python
 response = client.chat.completions.create(
@@ -356,19 +351,14 @@ response = client.chat.completions.create(
 )
 ```
 
-When `response_format.type` is `json_object`, the wrapper:
-- Injects system prompt instructions requiring valid JSON output
-- Strips common preambles (e.g. "Here is the JSON:") from responses
-- Uses balanced brace/bracket matching to extract JSON from mixed output
-- Handles escaped quotes and nested structures correctly
-
-Works with both streaming and non-streaming responses.
+With `json_object` mode, the wrapper adds system prompt instructions for JSON output, strips preambles like "Here is the JSON:", and uses brace-matching extraction as a fallback. Works streaming and non-streaming.
 
 ## Limitations
 
 - Images in messages are converted to text placeholders
 - OpenAI-style function calling not supported (tools auto-execute based on prompts)
-- `temperature`, `top_p`, `presence_penalty`, `frequency_penalty` are accepted but not passed to Claude SDK
+- `temperature` and `top_p` are applied via system prompt instructions (best-effort approximation, not native SDK parameters)
+- `presence_penalty` and `frequency_penalty` are accepted but ignored
 - Multiple responses (`n > 1`) not supported
 
 ## Testing
@@ -378,16 +368,12 @@ Works with both streaming and non-streaming responses.
 poetry run pytest tests/
 
 # Quick endpoint test (server must be running)
-poetry run python test_endpoints.py
+poetry run python tests/test_endpoints.py
 ```
 
-## Terms Compliance
+## Terms
 
-This wrapper requires your own Claude subscription or API access. It translates request formats -- it does not provide Claude access itself.
-
-- Uses the official Claude Agent SDK
-- Each user authenticates individually (no credential sharing)
-- No reselling, no data harvesting
+You need your own Claude subscription or API access. This wrapper translates request formats -- it does not provide Claude access.
 
 | Use Case | Recommended Auth |
 |----------|-----------------|
@@ -395,12 +381,12 @@ This wrapper requires your own Claude subscription or API access. It translates 
 | Business / commercial | API Key, Bedrock, or Vertex AI |
 | High-scale | Bedrock or Vertex AI |
 
-See [Anthropic's Terms of Service](https://www.anthropic.com/legal) for details.
+See [Anthropic's Terms of Service](https://www.anthropic.com/legal).
 
-## Licence
+## License
 
 MIT
 
 ## Contributing
 
-Contributions welcome. Open an issue or submit a pull request.
+PRs welcome.
