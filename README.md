@@ -4,9 +4,10 @@ An OpenAI API-compatible wrapper for Claude Code, powered by the Claude Agent SD
 
 ## Version
 
-**Current:** 2.5.0
+**Current:** 2.5.1
 
-What's new:
+What's new in 2.5.x:
+- Landing page redesigned with all 25 endpoints grouped by category
 - Model list updated from open-sourced Claude Code source (11 models, per-model metadata and pricing)
 - 33 tools tracked (up from 15), matching Claude Code's actual inventory
 - Cost tracking with authoritative per-model pricing
@@ -68,7 +69,7 @@ The Claude Code CLI is bundled with the SDK. No separate Node.js or npm install 
 ## Installation
 
 ```bash
-git clone https://github.com/RichardAtCT/claude-code-openai-wrapper
+git clone https://github.com/ttlequals0/claude-code-openai-wrapper
 cd claude-code-openai-wrapper
 poetry install
 cp .env.example .env  # Edit with your preferences
@@ -293,22 +294,75 @@ Sessions expire after 1 hour of inactivity. Manage them via:
 
 ## API Endpoints
 
+### Core API
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/` | GET | Landing page with API explorer |
 | `/v1/chat/completions` | POST | OpenAI-compatible chat |
 | `/v1/messages` | POST | Anthropic-compatible messages |
-| `/v1/models` | GET | List models |
-| `/v1/models/refresh` | POST | Refresh models from API |
+
+### Models
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/models` | GET | List available models |
 | `/v1/models/status` | GET | Model service status |
-| `/v1/auth/status` | GET | Auth status |
-| `/v1/sessions` | GET | List sessions |
-| `/v1/sessions/{id}` | GET/DELETE | Session details / delete |
+| `/v1/models/refresh` | POST | Refresh models from API |
+
+### Sessions
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/sessions` | GET | List active sessions |
 | `/v1/sessions/stats` | GET | Session statistics |
+| `/v1/sessions/{id}` | GET | Get session by ID |
+| `/v1/sessions/{id}` | DELETE | Delete session |
+
+### Tools
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/tools` | GET | List available tools |
+| `/v1/tools/config` | GET | Get tool configuration |
+| `/v1/tools/config` | POST | Update tool configuration |
+| `/v1/tools/stats` | GET | Tool usage statistics |
+
+### MCP Servers
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/mcp/servers` | GET | List MCP servers |
+| `/v1/mcp/servers` | POST | Register MCP server |
+| `/v1/mcp/connect` | POST | Connect to MCP server |
+| `/v1/mcp/disconnect` | POST | Disconnect MCP server |
+| `/v1/mcp/stats` | GET | MCP statistics |
+
+### Cache / Auth / System
+| Endpoint | Method | Description |
+|----------|--------|-------------|
 | `/v1/cache/stats` | GET | Cache statistics |
-| `/v1/cache/clear` | POST | Clear cache |
-| `/version` | GET | API version |
+| `/v1/cache/clear` | POST | Clear request cache |
+| `/v1/auth/status` | GET | Auth status |
+| `/v1/compatibility` | POST | Parameter compatibility check |
+| `/v1/debug/request` | POST | Debug request validation |
 | `/health` | GET | Health check |
+| `/version` | GET | API version |
+
+## JSON Response Mode
+
+Force JSON output using the OpenAI-compatible `response_format` parameter:
+
+```python
+response = client.chat.completions.create(
+    model="claude-sonnet-4-6",
+    messages=[{"role": "user", "content": "List 3 colors with hex codes"}],
+    response_format={"type": "json_object"}
+)
+```
+
+When `response_format.type` is `json_object`, the wrapper:
+- Injects system prompt instructions requiring valid JSON output
+- Strips common preambles (e.g. "Here is the JSON:") from responses
+- Uses balanced brace/bracket matching to extract JSON from mixed output
+- Handles escaped quotes and nested structures correctly
+
+Works with both streaming and non-streaming responses.
 
 ## Limitations
 
