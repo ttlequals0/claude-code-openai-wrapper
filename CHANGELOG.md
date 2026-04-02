@@ -5,6 +5,32 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-04-02
+
+### Added
+
+- **OpenAI Function Calling** (`src/function_calling.py`): Simulates OpenAI tool/function calling via system prompt injection and response parsing
+  - Converts `tools` array and `tool_choice` into Claude-compatible system prompts
+  - Parses Claude's response for ```tool_calls``` blocks and bare JSON arrays
+  - Returns OpenAI-format `tool_calls` in the response with generated call IDs
+  - Handles multi-turn conversations: assistant tool_calls and tool result messages converted to text
+- **JSON Schema in response_format**: Support for `response_format.type = "json_schema"` with schema definition
+  - Schema injected into user prompt (not system_prompt) for SDK subprocess compatibility
+  - Includes explicit rules for required properties, exact names, and exact types
+- **Streaming Fence Stripping** (`JsonFenceStripper` in `src/message_adapter.py`): Real-time removal of markdown ```json fences during streaming
+  - Hold-back buffers detect and strip opening/closing fences across chunk boundaries
+  - Replaces full-buffer strategy for JSON streaming -- chunks flow in real-time
+- **CPU Watchdog** (`src/cpu_watchdog.py`): Background CPU monitor for Docker/Linux deployments
+  - Reads /proc/self/stat every 30s, sends SIGTERM after 3 consecutive strikes above 80% CPU
+  - Disabled by default, enable with `WATCHDOG_ENABLED=true`
+  - Configurable interval, threshold, and strike count via env vars
+
+### Changed
+
+- **Message model**: Added `tool` role, `tool_calls`, `tool_call_id` fields for function calling support
+- **ResponseFormat model**: Extended with `json_schema` type and `JsonSchema` model
+- **Choice/StreamChoice**: Added `tool_calls` finish reason
+
 ## [2.5.2] - 2026-04-01
 
 ### Fixed

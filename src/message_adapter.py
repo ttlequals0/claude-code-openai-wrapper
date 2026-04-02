@@ -19,6 +19,70 @@ class JsonExtractionResult:
     preamble_found: Optional[str] = None
 
 
+class JsonFenceStripper:
+    """Strips markdown ```json fences from streaming chunks in real-time."""
+
+    _FENCES = ["```json\n", "```json\r\n", "```\n", "```\r\n"]
+    _MAX_FENCE_LEN = 10  # longest fence prefix to buffer
+    _CLOSE = "```"
+
+    def __init__(self):
+        self._opening_buf = ""
+        self._opening_stripped = False
+        self._holdback = ""
+
+    def process_delta(self, chunk: str) -> str:
+        if not chunk:
+            return ""
+
+        # Phase 1: detect and strip opening fence
+        if not self._opening_stripped:
+            self._opening_buf += chunk
+            if len(self._opening_buf) < self._MAX_FENCE_LEN:
+                # Still accumulating -- check if it could be a fence prefix
+                for fence in self._FENCES:
+                    fence_str = fence
+                    if fence_str.startswith(self._opening_buf):
+                        return ""  # could still match, hold back
+                # No fence can match, release buffer
+                self._opening_stripped = True
+                result = self._opening_buf
+                self._opening_buf = ""
+                return self._apply_holdback(result)
+            else:
+                # Buffer full -- check for fence match
+                self._opening_stripped = True
+                for fence in self._FENCES:
+                    fence_str = fence
+                    if self._opening_buf.startswith(fence_str):
+                        remainder = self._opening_buf[len(fence_str):]
+                        self._opening_buf = ""
+                        return self._apply_holdback(remainder)
+                # No match, release everything
+                result = self._opening_buf
+                self._opening_buf = ""
+                return self._apply_holdback(result)
+
+        return self._apply_holdback(chunk)
+
+    def _apply_holdback(self, text: str) -> str:
+        combined = self._holdback + text
+        if len(combined) <= len(self._CLOSE):
+            self._holdback = combined
+            return ""
+        self._holdback = combined[-len(self._CLOSE):]
+        return combined[:-len(self._CLOSE)]
+
+    def flush(self) -> str:
+        result = self._holdback
+        self._holdback = ""
+        # Strip closing fence if present
+        result = result.rstrip()
+        if result.endswith("```"):
+            result = result[:-3].rstrip()
+        return result
+
+
 class MessageAdapter:
     """Converts between OpenAI message format and Claude Code prompts."""
 
@@ -42,6 +106,18 @@ class MessageAdapter:
         "- Last character: } or ]\n"
         "- No preamble like 'Here is...' or 'Here's...'\n"
         "- No markdown, no code fences, no explanation"
+    )
+
+    JSON_SCHEMA_TEMPLATE = (
+        "You MUST respond with valid JSON that strictly conforms to the following JSON Schema.\n"
+        "Do not wrap the JSON in markdown code fences.\n"
+        "Do not include any text before or after the JSON.\n"
+        "RULES:\n"
+        "- Include ALL required properties from the schema, even if empty or default\n"
+        "- Use the EXACT property names from the schema\n"
+        "- Match the EXACT types specified (number not string, etc.)\n"
+        "- Do not add properties not in the schema\n\n"
+        "JSON Schema:\n{schema_json}"
     )
 
     # Common preambles that Claude may add before JSON output
@@ -495,13 +571,13 @@ class MessageAdapter:
         conversation_parts = []
 
         for message in messages:
+            content = message.content or ""
             if message.role == "system":
-                # Use the last system message as the system prompt
-                system_prompt = message.content
+                system_prompt = content
             elif message.role == "user":
-                conversation_parts.append(f"Human: {message.content}")
+                conversation_parts.append(f"Human: {content}")
             elif message.role == "assistant":
-                conversation_parts.append(f"Assistant: {message.content}")
+                conversation_parts.append(f"Assistant: {content}")
 
         # Join conversation parts
         prompt = "\n\n".join(conversation_parts)
