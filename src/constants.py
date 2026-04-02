@@ -28,16 +28,19 @@ import os
 
 # Claude Code tool inventory (sourced from open-sourced Claude Code CLI)
 CLAUDE_TOOLS = [
-    "Agent", "Task", "SendMessage",
-    "Bash", "BashOutput", "KillShell",
+    "Agent", "Task", "SendMessage", "ListPeers",
+    "Bash",
     "Glob", "Grep", "Read", "Edit", "Write", "NotebookEdit",
     "WebFetch", "WebSearch",
     "TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop",
-    "EnterPlanMode", "ExitPlanMode",
+    "EnterPlanMode", "ExitPlanMode", "VerifyPlanExecution",
     "EnterWorktree", "ExitWorktree",
     "ToolSearch", "AskUserQuestion",
     "CronCreate", "CronDelete", "CronList", "RemoteTrigger",
-    "TodoWrite", "Skill", "SlashCommand",
+    "TodoWrite", "Skill", "Brief", "Config",
+    "REPL", "Sleep", "Monitor",
+    "SendUserFile", "PushNotification",
+    "ListMcpResources", "ReadMcpResource",
 ]
 
 # Default tools to allow when tools are enabled
