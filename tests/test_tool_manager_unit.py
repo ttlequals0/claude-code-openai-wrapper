@@ -403,7 +403,7 @@ class TestToolMetadataCategories:
 
     def test_system_tools_category(self):
         """System tools are correctly categorized."""
-        system_tools = ["Bash", "BashOutput", "KillShell"]
+        system_tools = ["Bash", "Config", "REPL", "Sleep", "Monitor"]
         for tool_name in system_tools:
             assert TOOL_METADATA[tool_name].category == "system"
 
@@ -416,7 +416,7 @@ class TestToolMetadataCategories:
 
     def test_productivity_tools_category(self):
         """Productivity tools are correctly categorized."""
-        productivity_tools = ["TodoWrite", "Skill", "SlashCommand"]
+        productivity_tools = ["TodoWrite", "Skill"]
         for tool_name in productivity_tools:
             assert TOOL_METADATA[tool_name].category == "productivity"
 

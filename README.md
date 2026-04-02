@@ -9,7 +9,7 @@ OpenAI API-compatible wrapper for Claude Code. Drop it in front of any OpenAI cl
 What's new in 2.5.x:
 - Landing page redesigned with all endpoints grouped by category
 - Model list updated from open-sourced Claude Code source (11 models, per-model metadata and pricing)
-- 33 tools tracked (up from 15), matching Claude Code's actual inventory
+- 41 tools tracked, verified against Claude Code source
 - Cost tracking with authoritative per-model pricing
 - Retry logic with exponential backoff and model fallback
 - `X-Claude-Effort` and `X-Claude-Thinking` headers for fine-grained control
@@ -129,7 +129,7 @@ docker run -d -p 8000:8000 \
   -v ~/.claude:/root/.claude \
   -v /path/to/project:/workspace \
   -e CLAUDE_CWD=/workspace \
-  ttlequals0/claude-code-openai-wrapper:2.5.1
+  ttlequals0/claude-code-openai-wrapper:2.5.2
 
 # Or build locally
 docker build -t claude-wrapper:latest .
