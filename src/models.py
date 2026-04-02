@@ -22,10 +22,34 @@ class ContentPart(BaseModel):
     text: str
 
 
+class FunctionCall(BaseModel):
+    name: str
+    arguments: str
+
+
+class ToolCall(BaseModel):
+    id: str
+    type: Literal["function"] = "function"
+    function: FunctionCall
+
+
+class FunctionDefinition(BaseModel):
+    name: str
+    description: Optional[str] = None
+    parameters: Optional[Dict[str, Any]] = None
+
+
+class ToolDefinition(BaseModel):
+    type: Literal["function"] = "function"
+    function: FunctionDefinition
+
+
 class Message(BaseModel):
-    role: Literal["system", "user", "assistant"]
-    content: Union[str, List[ContentPart]]
+    role: Literal["system", "user", "assistant", "tool"]
+    content: Optional[Union[str, List[ContentPart]]] = None
     name: Optional[str] = None
+    tool_calls: Optional[List[ToolCall]] = None
+    tool_call_id: Optional[str] = None
 
     @model_validator(mode="after")
     def normalize_content(self):
@@ -53,13 +77,20 @@ class StreamOptions(BaseModel):
     )
 
 
-class ResponseFormat(BaseModel):
-    """OpenAI-compatible response format specification."""
+class JsonSchema(BaseModel):
+    name: str = ""
+    description: Optional[str] = None
+    schema_: Optional[Dict[str, Any]] = Field(default=None, alias="schema")
+    strict: Optional[bool] = None
+    model_config = {"populate_by_name": True}
 
-    type: Literal["text", "json_object"] = Field(
+
+class ResponseFormat(BaseModel):
+    type: Literal["text", "json_object", "json_schema"] = Field(
         default="text",
-        description="Response format type - 'text' for regular text, 'json_object' for JSON mode",
+        description="Response format type",
     )
+    json_schema: Optional[JsonSchema] = None
 
 
 class ChatCompletionRequest(BaseModel):
@@ -91,6 +122,14 @@ class ChatCompletionRequest(BaseModel):
     response_format: Optional[ResponseFormat] = Field(
         default=None,
         description="Response format - use {'type': 'json_object'} for JSON mode",
+    )
+    tools: Optional[List[ToolDefinition]] = Field(
+        default=None,
+        description="List of tools the model may call (OpenAI function calling format)",
+    )
+    tool_choice: Optional[Union[str, Dict[str, Any]]] = Field(
+        default=None,
+        description="Controls which function is called: 'none', 'auto', 'required', or specific function",
     )
 
     @field_validator("n")
@@ -215,7 +254,7 @@ class ChatCompletionRequest(BaseModel):
 class Choice(BaseModel):
     index: int
     message: Message
-    finish_reason: Optional[Literal["stop", "length", "content_filter", "null"]] = None
+    finish_reason: Optional[Literal["stop", "length", "content_filter", "tool_calls", "null"]] = None
 
 
 class Usage(BaseModel):
@@ -237,7 +276,7 @@ class ChatCompletionResponse(BaseModel):
 class StreamChoice(BaseModel):
     index: int
     delta: Dict[str, Any]
-    finish_reason: Optional[Literal["stop", "length", "content_filter", "null"]] = None
+    finish_reason: Optional[Literal["stop", "length", "content_filter", "tool_calls", "null"]] = None
 
 
 class ChatCompletionStreamResponse(BaseModel):

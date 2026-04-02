@@ -4,7 +4,13 @@ OpenAI API-compatible wrapper for Claude Code. Drop it in front of any OpenAI cl
 
 ## Version
 
-**Current:** 2.5.1
+**Current:** 2.6.0
+
+What's new in 2.6.0:
+- OpenAI function calling simulation (tools/tool_choice parameters)
+- JSON schema support in response_format
+- Real-time streaming fence stripping for JSON responses
+- CPU watchdog for Docker deployments
 
 What's new in 2.5.x:
 - Landing page redesigned with all endpoints grouped by category
@@ -129,7 +135,7 @@ docker run -d -p 8000:8000 \
   -v ~/.claude:/root/.claude \
   -v /path/to/project:/workspace \
   -e CLAUDE_CWD=/workspace \
-  ttlequals0/claude-code-openai-wrapper:2.5.2
+  ttlequals0/claude-code-openai-wrapper:2.6.0
 
 # Or build locally
 docker build -t claude-wrapper:latest .
@@ -340,6 +346,39 @@ Sessions expire after 1 hour of inactivity. Management endpoints:
 | `/v1/debug/request` | POST | Debug request validation |
 | `/health` | GET | Health check |
 | `/version` | GET | API version |
+
+## Function Calling
+
+Pass OpenAI-format tool definitions. The wrapper injects them into Claude's system prompt and parses structured responses back into `tool_calls` format.
+
+```python
+response = client.chat.completions.create(
+    model="claude-sonnet-4-6",
+    messages=[{"role": "user", "content": "What's the weather in NYC?"}],
+    tools=[{
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get current weather for a location",
+            "parameters": {
+                "type": "object",
+                "properties": {"location": {"type": "string"}},
+                "required": ["location"],
+            },
+        },
+    }],
+    tool_choice="auto",
+)
+
+# Response includes tool_calls when Claude decides to call a function
+if response.choices[0].finish_reason == "tool_calls":
+    for tc in response.choices[0].message.tool_calls:
+        print(f"Call: {tc.function.name}({tc.function.arguments})")
+```
+
+Supports `tool_choice`: `"auto"` (default), `"required"`, `"none"`, or `{"type": "function", "function": {"name": "..."}}`.
+
+Multi-turn tool conversations work -- pass assistant messages with `tool_calls` and `tool` role result messages back. The wrapper converts them to text for Claude.
 
 ## JSON Response Mode
 

@@ -41,7 +41,14 @@ from src.models import (
     AnthropicUsage,
 )
 from src.claude_cli import ClaudeCodeCLI
-from src.message_adapter import MessageAdapter
+from src.message_adapter import MessageAdapter, JsonFenceStripper
+from src.function_calling import (
+    build_tools_system_prompt,
+    parse_tool_calls,
+    format_tool_calls,
+    convert_tool_messages,
+)
+from src.cpu_watchdog import cpu_watchdog
 from src.auth import verify_api_key, security, validate_claude_code_auth, get_claude_code_auth_info
 from src.parameter_validator import ParameterValidator, CompatibilityReporter
 from src.session_manager import session_manager
@@ -223,8 +230,12 @@ async def lifespan(app: FastAPI):
 
     cost_cleanup_task = asyncio.get_running_loop().create_task(cost_cleanup_loop())
 
+    # Start CPU watchdog (Linux/Docker only)
+    cpu_watchdog.start()
+
     yield
 
+    cpu_watchdog.stop()
     cost_cleanup_task.cancel()
 
     # Cleanup on shutdown
@@ -486,6 +497,10 @@ async def generate_streaming_response(
             request.messages, request.session_id
         )
 
+        # Convert tool role messages for Claude compatibility
+        if request.tools:
+            all_messages = convert_tool_messages(all_messages)
+
         # Convert messages to prompt
         prompt, system_prompt = MessageAdapter.messages_to_prompt(all_messages)
 
@@ -498,17 +513,34 @@ async def generate_streaming_response(
                 system_prompt = sampling_instructions
             logger.debug(f"Added sampling instructions: {sampling_instructions}")
 
+        # Function calling: inject tool definitions into system prompt
+        has_tools = request.tools and len(request.tools) > 0
+        if has_tools:
+            tools_dicts = [t.model_dump() for t in request.tools]
+            tools_prompt = build_tools_system_prompt(tools_dicts, request.tool_choice)
+            if tools_prompt:
+                if system_prompt:
+                    system_prompt = f"{system_prompt}\n\n{tools_prompt}"
+                else:
+                    system_prompt = tools_prompt
+                logger.info(f"Function calling (streaming): injected {len(request.tools)} tool definitions")
+
         # Check for JSON mode
-        json_mode = request.response_format and request.response_format.type == "json_object"
+        json_mode = request.response_format and request.response_format.type in ("json_object", "json_schema")
         if json_mode:
-            # Prepend JSON instruction to system prompt
-            if system_prompt:
-                system_prompt = f"{MessageAdapter.JSON_MODE_INSTRUCTION}\n\n{system_prompt}"
+            if request.response_format.type == "json_schema" and request.response_format.json_schema:
+                schema = request.response_format.json_schema
+                schema_json = json.dumps(schema.schema_ or {}, indent=2)
+                schema_instructions = MessageAdapter.JSON_SCHEMA_TEMPLATE.format(schema_json=schema_json)
+                prompt = f"{schema_instructions}\n\n{prompt}"
+                logger.info(f"JSON schema mode (streaming): injected schema into prompt")
             else:
-                system_prompt = MessageAdapter.JSON_MODE_INSTRUCTION
-            # Also append to user prompt to reinforce JSON requirement
-            prompt = prompt + MessageAdapter.JSON_PROMPT_SUFFIX
-            logger.info("JSON mode enabled (streaming) - instruction added to system and user prompt")
+                if system_prompt:
+                    system_prompt = f"{MessageAdapter.JSON_MODE_INSTRUCTION}\n\n{system_prompt}"
+                else:
+                    system_prompt = MessageAdapter.JSON_MODE_INSTRUCTION
+                prompt = prompt + MessageAdapter.JSON_PROMPT_SUFFIX
+                logger.info("JSON mode enabled (streaming) - instruction added to system and user prompt")
 
         # Filter content for unsupported features
         prompt = MessageAdapter.filter_content(prompt)
@@ -522,6 +554,11 @@ async def generate_streaming_response(
         role_sent = False  # Track if we've sent the initial role chunk
         content_sent = False  # Track if we've sent any content
         json_mode_buffer = []  # Buffer for JSON mode - accumulate all content
+        tool_call_buffer = []  # Buffer when tools are defined - parse at end
+        fence_stripper = JsonFenceStripper() if json_mode else None
+
+        if has_tools and json_mode:
+            logger.info("Both tools and JSON mode active -- tools take priority for buffering")
 
         async for chunk in claude_cli.run_completion(
             **_run_completion_kwargs(claude_options, prompt, system_prompt, stream=True),
@@ -573,48 +610,105 @@ async def generate_streaming_response(
                         filtered_text = MessageAdapter.filter_content(raw_text)
 
                         if filtered_text and not filtered_text.isspace():
-                            if json_mode:
-                                # In JSON mode, buffer content for later processing
+                            if has_tools:
+                                # Buffer when tools defined -- parse tool_calls at end
+                                tool_call_buffer.append(filtered_text)
+                            elif json_mode and fence_stripper:
+                                # Stream through fence stripper
+                                stripped = fence_stripper.process_delta(filtered_text)
+                                if stripped:
+                                    stream_chunk = ChatCompletionStreamResponse(
+                                        id=request_id,
+                                        model=request.model,
+                                        choices=[StreamChoice(index=0, delta={"content": stripped}, finish_reason=None)],
+                                    )
+                                    yield f"data: {stream_chunk.model_dump_json()}\n\n"
+                                    content_sent = True
+                            elif json_mode:
                                 json_mode_buffer.append(filtered_text)
                             else:
-                                # Create streaming chunk
                                 stream_chunk = ChatCompletionStreamResponse(
                                     id=request_id,
                                     model=request.model,
-                                    choices=[
-                                        StreamChoice(
-                                            index=0,
-                                            delta={"content": filtered_text},
-                                            finish_reason=None,
-                                        )
-                                    ],
+                                    choices=[StreamChoice(index=0, delta={"content": filtered_text}, finish_reason=None)],
                                 )
-
                                 yield f"data: {stream_chunk.model_dump_json()}\n\n"
                                 content_sent = True
 
                 elif isinstance(content, str):
-                    # Filter out tool usage and thinking blocks
                     filtered_content = MessageAdapter.filter_content(content)
 
                     if filtered_content and not filtered_content.isspace():
-                        if json_mode:
-                            # In JSON mode, buffer content for later processing
+                        if has_tools:
+                            tool_call_buffer.append(filtered_content)
+                        elif json_mode and fence_stripper:
+                            stripped = fence_stripper.process_delta(filtered_content)
+                            if stripped:
+                                stream_chunk = ChatCompletionStreamResponse(
+                                    id=request_id,
+                                    model=request.model,
+                                    choices=[StreamChoice(index=0, delta={"content": stripped}, finish_reason=None)],
+                                )
+                                yield f"data: {stream_chunk.model_dump_json()}\n\n"
+                                content_sent = True
+                        elif json_mode:
                             json_mode_buffer.append(filtered_content)
                         else:
-                            # Create streaming chunk
                             stream_chunk = ChatCompletionStreamResponse(
                                 id=request_id,
                                 model=request.model,
-                                choices=[
-                                    StreamChoice(
-                                        index=0, delta={"content": filtered_content}, finish_reason=None
-                                    )
-                                ],
+                                choices=[StreamChoice(index=0, delta={"content": filtered_content}, finish_reason=None)],
                             )
-
                             yield f"data: {stream_chunk.model_dump_json()}\n\n"
                             content_sent = True
+
+        # Flush fence stripper if used
+        if json_mode and fence_stripper:
+            remaining = fence_stripper.flush()
+            if remaining:
+                if not role_sent:
+                    initial_chunk = ChatCompletionStreamResponse(
+                        id=request_id, model=request.model,
+                        choices=[StreamChoice(index=0, delta={"role": "assistant", "content": ""}, finish_reason=None)],
+                    )
+                    yield f"data: {initial_chunk.model_dump_json()}\n\n"
+                    role_sent = True
+                flush_chunk = ChatCompletionStreamResponse(
+                    id=request_id, model=request.model,
+                    choices=[StreamChoice(index=0, delta={"content": remaining}, finish_reason=None)],
+                )
+                yield f"data: {flush_chunk.model_dump_json()}\n\n"
+                content_sent = True
+
+        # Handle tool call buffer: parse and emit tool_calls
+        if has_tools and tool_call_buffer:
+            combined = "".join(tool_call_buffer)
+            parsed_calls, remaining_text = parse_tool_calls(combined)
+            if not role_sent:
+                initial_chunk = ChatCompletionStreamResponse(
+                    id=request_id, model=request.model,
+                    choices=[StreamChoice(index=0, delta={"role": "assistant", "content": ""}, finish_reason=None)],
+                )
+                yield f"data: {initial_chunk.model_dump_json()}\n\n"
+                role_sent = True
+            if parsed_calls:
+                formatted = format_tool_calls(parsed_calls)
+                tc_delta = {"tool_calls": [tc.model_dump() for tc in formatted]}
+                if remaining_text.strip():
+                    tc_delta["content"] = remaining_text.strip()
+                tc_chunk = ChatCompletionStreamResponse(
+                    id=request_id, model=request.model,
+                    choices=[StreamChoice(index=0, delta=tc_delta, finish_reason=None)],
+                )
+                yield f"data: {tc_chunk.model_dump_json()}\n\n"
+                content_sent = True
+            elif combined.strip():
+                text_chunk = ChatCompletionStreamResponse(
+                    id=request_id, model=request.model,
+                    choices=[StreamChoice(index=0, delta={"content": combined}, finish_reason=None)],
+                )
+                yield f"data: {text_chunk.model_dump_json()}\n\n"
+                content_sent = True
 
         # Handle JSON mode: emit accumulated content as single JSON-formatted chunk
         if json_mode and json_mode_buffer:
@@ -809,6 +903,10 @@ async def chat_completions(
                 f"Chat completion: session_id={actual_session_id}, total_messages={len(all_messages)}"
             )
 
+            # Convert tool role messages for Claude compatibility
+            if request_body.tools:
+                all_messages = convert_tool_messages(all_messages)
+
             # Convert messages to prompt
             prompt, system_prompt = MessageAdapter.messages_to_prompt(all_messages)
 
@@ -821,20 +919,39 @@ async def chat_completions(
                     system_prompt = sampling_instructions
                 logger.debug(f"Added sampling instructions: {sampling_instructions}")
 
+            # Function calling: inject tool definitions into system prompt
+            has_tools = request_body.tools and len(request_body.tools) > 0
+            if has_tools:
+                tools_dicts = [t.model_dump() for t in request_body.tools]
+                tools_prompt = build_tools_system_prompt(tools_dicts, request_body.tool_choice)
+                if tools_prompt:
+                    if system_prompt:
+                        system_prompt = f"{system_prompt}\n\n{tools_prompt}"
+                    else:
+                        system_prompt = tools_prompt
+                    logger.info(f"Function calling: injected {len(request_body.tools)} tool definitions")
+
             # Check for JSON mode
             json_mode = (
                 request_body.response_format
-                and request_body.response_format.type == "json_object"
+                and request_body.response_format.type in ("json_object", "json_schema")
             )
             if json_mode:
-                # Prepend JSON instruction to system prompt
-                if system_prompt:
-                    system_prompt = f"{MessageAdapter.JSON_MODE_INSTRUCTION}\n\n{system_prompt}"
+                if request_body.response_format.type == "json_schema" and request_body.response_format.json_schema:
+                    # JSON schema mode: inject schema into prompt (not system_prompt)
+                    schema = request_body.response_format.json_schema
+                    schema_json = json.dumps(schema.schema_ or {}, indent=2)
+                    schema_instructions = MessageAdapter.JSON_SCHEMA_TEMPLATE.format(schema_json=schema_json)
+                    prompt = f"{schema_instructions}\n\n{prompt}"
+                    logger.info(f"JSON schema mode: injected schema ({len(schema_json)} chars) into prompt")
                 else:
-                    system_prompt = MessageAdapter.JSON_MODE_INSTRUCTION
-                # Also append to user prompt to reinforce JSON requirement
-                prompt = prompt + MessageAdapter.JSON_PROMPT_SUFFIX
-                logger.info("JSON mode enabled - instruction added to system and user prompt")
+                    # Basic JSON object mode
+                    if system_prompt:
+                        system_prompt = f"{MessageAdapter.JSON_MODE_INSTRUCTION}\n\n{system_prompt}"
+                    else:
+                        system_prompt = MessageAdapter.JSON_MODE_INSTRUCTION
+                    prompt = prompt + MessageAdapter.JSON_PROMPT_SUFFIX
+                    logger.info("JSON mode enabled - instruction added to system and user prompt")
 
             # Filter content
             prompt = MessageAdapter.filter_content(prompt)
@@ -880,14 +997,29 @@ async def chat_completions(
                     logger.debug(f"Extracted JSON preview: {assistant_content[:200]}")
                     log_json_structure(assistant_content, logger)
 
+            # Parse function calls from response if tools were provided
+            tool_calls_list = None
+            finish_reason = "stop"
+            if has_tools:
+                parsed_calls, remaining_text = parse_tool_calls(assistant_content)
+                if parsed_calls:
+                    tool_calls_list = format_tool_calls(parsed_calls)
+                    assistant_content = remaining_text.strip() if remaining_text.strip() else None
+                    finish_reason = "tool_calls"
+                    logger.info(f"Function calling: parsed {len(parsed_calls)} tool call(s)")
+
             # Add assistant response to session if using session mode
             if actual_session_id:
-                assistant_message = Message(role="assistant", content=assistant_content)
+                assistant_message = Message(
+                    role="assistant",
+                    content=assistant_content,
+                    tool_calls=tool_calls_list,
+                )
                 session_manager.add_assistant_response(actual_session_id, assistant_message)
 
             # Estimate tokens (rough approximation)
             prompt_tokens = MessageAdapter.estimate_tokens(prompt)
-            completion_tokens = MessageAdapter.estimate_tokens(assistant_content)
+            completion_tokens = MessageAdapter.estimate_tokens(assistant_content or "")
 
             await cost_tracker.record_usage(
                 session_id=actual_session_id or request_id,
@@ -899,14 +1031,19 @@ async def chat_completions(
             )
 
             # Create response
+            response_message = Message(
+                role="assistant",
+                content=assistant_content,
+                tool_calls=tool_calls_list,
+            )
             response = ChatCompletionResponse(
                 id=request_id,
                 model=request_body.model,
                 choices=[
                     Choice(
                         index=0,
-                        message=Message(role="assistant", content=assistant_content),
-                        finish_reason="stop",
+                        message=response_message,
+                        finish_reason=finish_reason,
                     )
                 ],
                 usage=Usage(

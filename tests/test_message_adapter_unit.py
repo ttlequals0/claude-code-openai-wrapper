@@ -93,7 +93,7 @@ class TestFilterContent:
     def test_empty_content_returns_empty(self):
         """Empty content returns empty."""
         assert MessageAdapter.filter_content("") == ""
-        assert MessageAdapter.filter_content(None) is None
+        assert MessageAdapter.filter_content(None) == ""
 
     def test_plain_text_unchanged(self):
         """Plain text content is unchanged."""
