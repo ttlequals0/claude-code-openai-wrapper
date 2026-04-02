@@ -1,0 +1,4 @@
+# file: /Users/dkrachtus/repos/claude-code-openai-wrapper/src/cost_tracker.py
+# hypothesis_version: 6.151.4
+
+[0.0, 0.3, 3.0, 3.75, 15.0, 1000000, 'active_sessions', 'cache_read', 'cache_write', 'cost_usd', 'input', 'input_tokens', 'model_usage', 'output', 'output_tokens', 'request_count', 'requests', 'session_id', 'total_cost_usd', 'total_input_tokens', 'total_output_tokens', 'total_requests']

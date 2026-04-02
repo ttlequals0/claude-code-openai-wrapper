@@ -1,0 +1,4 @@
+# file: /Users/dkrachtus/repos/claude-code-openai-wrapper/src/retry.py
+# hypothesis_version: 6.151.4
+
+[0.25, 400, 401, 429, 500, 529, 1000, 30000, 'connection', 'econnreset', 'epipe', 'timeout']

@@ -1,0 +1,4 @@
+# file: /Users/dkrachtus/repos/claude-code-openai-wrapper/src/function_calling.py
+# hypothesis_version: 6.151.4
+
+['No description', '\\[\\s*\\{\\s*"name"\\s*:', ']', 'arguments', 'assistant', 'content', 'description', 'function', 'name', 'none', 'parameters', 'required', 'role', 'tool', 'tool_call_id', 'tool_calls', 'unknown', 'user', '{}']

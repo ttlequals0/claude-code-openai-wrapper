@@ -1,0 +1,4 @@
+# file: /Users/dkrachtus/repos/claude-code-openai-wrapper/src/models.py
+# hypothesis_version: 6.151.4
+
+[0.3, 0.5, 0.7, 0.9, 1.0, 1.5, 100, 200, 500, 4096, '-_.', 'System prompt', 'after', 'assistant', 'chat.completion', 'command', 'content_filter', 'end_turn', 'json_object', 'length', 'max_thinking_tokens', 'max_tokens', 'message', 'model', 'n', 'name', 'null', 'server_name', 'stop', 'stop_sequence', 'system', 'text', 'tool_name', 'type', 'user']

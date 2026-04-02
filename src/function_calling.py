@@ -49,7 +49,7 @@ def build_tools_system_prompt(tools: list, tool_choice=None) -> str:
     return "\n".join(parts)
 
 
-def parse_tool_calls(response_text: str) -> tuple:
+def parse_tool_calls(response_text: str) -> tuple[list, str]:
     # Primary: fenced tool_calls block
     pattern = r"```tool_calls\s*\n(.*?)```"
     match = re.search(pattern, response_text, re.DOTALL)
@@ -63,18 +63,23 @@ def parse_tool_calls(response_text: str) -> tuple:
         except json.JSONDecodeError:
             logger.warning("Found tool_calls block but failed to parse JSON")
 
-    # Fallback: bare JSON array starting with [{"name":
-    bare_pattern = r'(\[\s*\{\s*"name"\s*:.*\])'
-    bare_match = re.search(bare_pattern, response_text, re.DOTALL)
+    # Fallback: find [{"name": and try to parse valid JSON from that position
+    bare_pattern = r'\[\s*\{\s*"name"\s*:'
+    bare_match = re.search(bare_pattern, response_text)
 
     if bare_match:
-        try:
-            calls = json.loads(bare_match.group(1))
-            remaining = response_text[:bare_match.start()] + response_text[bare_match.end():]
-            remaining = remaining.strip()
-            return (calls, remaining)
-        except json.JSONDecodeError:
-            logger.warning("Found bare JSON array but failed to parse")
+        start = bare_match.start()
+        # Try increasingly longer substrings to find valid JSON
+        for end in range(len(response_text), start, -1):
+            if response_text[end - 1] == ']':
+                try:
+                    calls = json.loads(response_text[start:end])
+                    remaining = response_text[:start] + response_text[end:]
+                    remaining = remaining.strip()
+                    return (calls, remaining)
+                except json.JSONDecodeError:
+                    continue
+        logger.warning("Found bare JSON array marker but failed to parse")
 
     return ([], response_text)
 

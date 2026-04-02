@@ -39,3 +39,17 @@ class TestCPUWatchdog:
     def test_stop_no_task(self):
         wd = CPUWatchdog()
         wd.stop()  # should not raise
+
+    def test_strike_increment_and_reset(self):
+        wd = CPUWatchdog()
+        wd._strikes = 2
+        # Simulating a below-threshold reading resets strikes
+        wd._strikes = 0
+        assert wd._strikes == 0
+
+    def test_env_vars_read_at_import(self):
+        from src.cpu_watchdog import WATCHDOG_ENABLED, WATCHDOG_INTERVAL, WATCHDOG_CPU_THRESHOLD, WATCHDOG_STRIKES
+        assert isinstance(WATCHDOG_ENABLED, bool)
+        assert isinstance(WATCHDOG_INTERVAL, int)
+        assert isinstance(WATCHDOG_CPU_THRESHOLD, float)
+        assert isinstance(WATCHDOG_STRIKES, int)

@@ -172,3 +172,30 @@ class TestConvertToolMessages:
         assert result[0].role == "user"
         assert result[1].role == "assistant"
         assert result[2].role == "user"
+
+    def test_convert_dict_messages(self):
+        messages = [
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "search", "arguments": '{"q": "test"}'}}
+            ]},
+            {"role": "tool", "content": "results", "name": "search", "tool_call_id": "c1"},
+        ]
+        result = convert_tool_messages(messages)
+        assert len(result) == 2
+        assert result[0].role == "assistant"
+        assert "Called search" in result[0].content
+        assert result[1].role == "user"
+        assert "Result of search" in result[1].content
+
+
+class TestParseToolCallsEdgeCases:
+    def test_nested_arrays_in_arguments(self):
+        text = '[{"name": "fn", "arguments": {"items": [1, 2, 3]}}]'
+        calls, remaining = parse_tool_calls(text)
+        assert len(calls) == 1
+        assert calls[0]["arguments"]["items"] == [1, 2, 3]
+
+    def test_tool_choice_dict_in_prompt(self):
+        choice = {"type": "function", "function": {"name": "search"}}
+        result = build_tools_system_prompt(SAMPLE_TOOLS, choice)
+        assert "MUST call function search" in result

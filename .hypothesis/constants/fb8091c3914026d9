@@ -1,0 +1,4 @@
+# file: /Users/dkrachtus/repos/claude-code-openai-wrapper/src/request_cache.py
+# hypothesis_version: 6.151.4
+
+[100, '1', '100', '60', 'current_size', 'enabled', 'evictions', 'expirations', 'false', 'hit_rate_percent', 'hits', 'max_size', 'max_tokens', 'messages', 'misses', 'model', 'on', 'response_format', 'temperature', 'top_p', 'true', 'ttl_seconds', 'yes']

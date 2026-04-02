@@ -557,6 +557,9 @@ async def generate_streaming_response(
         tool_call_buffer = []  # Buffer when tools are defined - parse at end
         fence_stripper = JsonFenceStripper() if json_mode else None
 
+        if has_tools and json_mode:
+            logger.info("Both tools and JSON mode active -- tools take priority for buffering")
+
         async for chunk in claude_cli.run_completion(
             **_run_completion_kwargs(claude_options, prompt, system_prompt, stream=True),
         ):
@@ -938,17 +941,7 @@ async def chat_completions(
                     # JSON schema mode: inject schema into prompt (not system_prompt)
                     schema = request_body.response_format.json_schema
                     schema_json = json.dumps(schema.schema_ or {}, indent=2)
-                    schema_instructions = (
-                        "You MUST respond with valid JSON that strictly conforms to the following JSON Schema.\n"
-                        "Do not wrap the JSON in markdown code fences.\n"
-                        "Do not include any text before or after the JSON.\n"
-                        "RULES:\n"
-                        "- Include ALL required properties from the schema, even if empty or default\n"
-                        "- Use the EXACT property names from the schema\n"
-                        "- Match the EXACT types specified (number not string, etc.)\n"
-                        "- Do not add properties not in the schema\n\n"
-                        f"JSON Schema:\n{schema_json}"
-                    )
+                    schema_instructions = MessageAdapter.JSON_SCHEMA_TEMPLATE.format(schema_json=schema_json)
                     prompt = f"{schema_instructions}\n\n{prompt}"
                     logger.info(f"JSON schema mode: injected schema ({len(schema_json)} chars) into prompt")
                 else:

@@ -41,8 +41,7 @@ class JsonFenceStripper:
             if len(self._opening_buf) < self._MAX_FENCE_LEN:
                 # Still accumulating -- check if it could be a fence prefix
                 for fence in self._FENCES:
-                    fence_str = fence
-                    if fence_str.startswith(self._opening_buf):
+                    if fence.startswith(self._opening_buf):
                         return ""  # could still match, hold back
                 # No fence can match, release buffer
                 self._opening_stripped = True
@@ -53,9 +52,8 @@ class JsonFenceStripper:
                 # Buffer full -- check for fence match
                 self._opening_stripped = True
                 for fence in self._FENCES:
-                    fence_str = fence
-                    if self._opening_buf.startswith(fence_str):
-                        remainder = self._opening_buf[len(fence_str):]
+                    if self._opening_buf.startswith(fence):
+                        remainder = self._opening_buf[len(fence):]
                         self._opening_buf = ""
                         return self._apply_holdback(remainder)
                 # No match, release everything
@@ -595,7 +593,7 @@ class MessageAdapter:
         Remove thinking blocks, tool calls, and image references.
         """
         if not content:
-            return content
+            return content or ""
 
         # Remove thinking blocks (common when tools are disabled but Claude tries to think)
         thinking_pattern = r"<thinking>.*?</thinking>"

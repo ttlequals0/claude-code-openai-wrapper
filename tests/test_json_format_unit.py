@@ -221,6 +221,33 @@ class TestResponseFormatModel:
         )
         assert request.response_format.type == "json_object"
 
+    def test_response_format_json_schema(self):
+        """json_schema type with schema definition."""
+        rf = ResponseFormat(
+            type="json_schema",
+            json_schema={"name": "test", "schema": {"type": "object", "properties": {"x": {"type": "number"}}}},
+        )
+        assert rf.type == "json_schema"
+        assert rf.json_schema is not None
+        assert rf.json_schema.name == "test"
+        assert rf.json_schema.schema_ is not None
+        assert rf.json_schema.schema_["type"] == "object"
+
+    def test_response_format_json_schema_in_request(self):
+        """json_schema type works in ChatCompletionRequest."""
+        request = ChatCompletionRequest(
+            messages=[Message(role="user", content="Return JSON")],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "colors",
+                    "schema": {"type": "object", "properties": {"colors": {"type": "array"}}},
+                },
+            },
+        )
+        assert request.response_format.type == "json_schema"
+        assert request.response_format.json_schema.name == "colors"
+
 
 class TestJsonModeInstruction:
     """Test JSON_MODE_INSTRUCTION constant."""
