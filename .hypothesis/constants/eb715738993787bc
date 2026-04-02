@@ -1,4 +1,0 @@
-# file: /Users/dkrachtus/repos/claude-code-openai-wrapper/src/cpu_watchdog.py
-# hypothesis_version: 6.151.4
-
-[0.0, 100.0, '/proc/self/stat', '3', '30', '80', 'CPU watchdog stopped', 'SC_CLK_TCK', 'WATCHDOG_ENABLED', 'WATCHDOG_INTERVAL', 'WATCHDOG_STRIKES', 'false', 'linux', 'true']

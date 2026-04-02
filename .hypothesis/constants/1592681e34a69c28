@@ -1,4 +1,0 @@
-# file: /Users/dkrachtus/repos/claude-code-openai-wrapper/src/message_adapter.py
-# hypothesis_version: 6.151.4
-
-[200, '"', '<args>.*?</args>', '<bash>.*?</bash>', 'Here is the JSON:', 'Here is the data:', 'Here is the output:', 'Here is the result:', 'Here is your JSON:', "Here's the JSON:", "Here's the data:", "Here's the output:", "Here's the response:", "Here's the result:", "Here's your JSON:", 'JSON response:', 'Output:', 'Response:', 'Result:', 'The JSON is:', '[', '[]', '\\', '\\n\\s*\\n\\s*\\n', ']', '```', 'assistant', 'brace_match', 'code_block', 'content', 'direct', 'extracted_length', 'failed', 'fallback', 'fallback_used', 'fallback_value', 'finish_reason', 'method', 'model', 'original_length', 'preamble_found', 'preamble_removed', 'role', 'stop', 'strict_mode', 'success', 'system', 'user', '{', '{[', '}', '}]']

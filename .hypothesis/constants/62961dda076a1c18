@@ -1,4 +1,0 @@
-# file: /Users/dkrachtus/repos/claude-code-openai-wrapper/src/model_service.py
-# hypothesis_version: 6.151.4
-
-[10.0, 200, 401, 429, '2023-06-01', 'ANTHROPIC_API_KEY', 'anthropic-version', 'api', 'count', 'current_count', 'data', 'fallback', 'id', 'initialized', 'last_refresh', 'message', 'model_count', 'models', 'source', 'success', 'x-api-key']
