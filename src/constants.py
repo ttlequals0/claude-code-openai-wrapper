@@ -69,14 +69,24 @@ DEFAULT_DISALLOWED_TOOLS = [
 _DEFAULT_MODEL_META = {"context_window": 200_000, "default_max_output": 32_000, "max_output_limit": 64_000}
 
 _MODEL_OVERRIDES = {
-    "claude-opus-4-6": {"default_max_output": 64_000, "max_output_limit": 128_000},
-    "claude-sonnet-4-6": {"max_output_limit": 128_000},
-    "claude-3-5-sonnet-20241022": {"default_max_output": 8_192, "max_output_limit": 8_192},
-    "claude-3-5-haiku-20241022": {"default_max_output": 8_192, "max_output_limit": 8_192},
+    "claude-opus-4-7": {
+        "context_window": 1_000_000,
+        "default_max_output": 64_000,
+        "max_output_limit": 128_000,
+    },
+    "claude-opus-4-6": {
+        "context_window": 1_000_000,
+        "default_max_output": 64_000,
+        "max_output_limit": 128_000,
+    },
+    "claude-sonnet-4-6": {"context_window": 1_000_000},
+    "claude-opus-4-1-20250805": {"default_max_output": 32_000, "max_output_limit": 32_000},
+    "claude-opus-4-20250514": {"default_max_output": 32_000, "max_output_limit": 32_000},
 }
 
 # All supported model IDs (order: newest first)
 _ALL_MODEL_IDS = [
+    "claude-opus-4-7",
     "claude-opus-4-6",
     "claude-sonnet-4-6",
     "claude-opus-4-5-20251101",
@@ -85,9 +95,6 @@ _ALL_MODEL_IDS = [
     "claude-opus-4-1-20250805",
     "claude-sonnet-4-20250514",
     "claude-opus-4-20250514",
-    "claude-3-7-sonnet-20250219",
-    "claude-3-5-sonnet-20241022",
-    "claude-3-5-haiku-20241022",
 ]
 
 MODEL_METADATA = {
@@ -107,20 +114,17 @@ _PRICING_SONNET = {"input": 3.0, "output": 15.0, "cache_read": 0.30, "cache_writ
 _PRICING_OPUS = {"input": 5.0, "output": 25.0, "cache_read": 0.50, "cache_write": 6.25}
 _PRICING_OPUS_LEGACY = {"input": 15.0, "output": 75.0, "cache_read": 1.50, "cache_write": 18.75}
 _PRICING_HAIKU_45 = {"input": 1.0, "output": 5.0, "cache_read": 0.10, "cache_write": 1.25}
-_PRICING_HAIKU_35 = {"input": 0.80, "output": 4.0, "cache_read": 0.08, "cache_write": 1.00}
 
 MODEL_PRICING = {
-    "claude-sonnet-4-6": _PRICING_SONNET,
-    "claude-sonnet-4-5-20250929": _PRICING_SONNET,
-    "claude-sonnet-4-20250514": _PRICING_SONNET,
-    "claude-3-7-sonnet-20250219": _PRICING_SONNET,
-    "claude-3-5-sonnet-20241022": _PRICING_SONNET,
+    "claude-opus-4-7": _PRICING_OPUS,
     "claude-opus-4-6": _PRICING_OPUS,
     "claude-opus-4-5-20251101": _PRICING_OPUS,
     "claude-opus-4-1-20250805": _PRICING_OPUS_LEGACY,
     "claude-opus-4-20250514": _PRICING_OPUS_LEGACY,
+    "claude-sonnet-4-6": _PRICING_SONNET,
+    "claude-sonnet-4-5-20250929": _PRICING_SONNET,
+    "claude-sonnet-4-20250514": _PRICING_SONNET,
     "claude-haiku-4-5-20251001": _PRICING_HAIKU_45,
-    "claude-3-5-haiku-20241022": _PRICING_HAIKU_35,
 }
 
 # Web search cost (per request, all models)
@@ -129,6 +133,7 @@ WEB_SEARCH_COST_USD = 0.01
 # Fallback model mapping: when an Opus model is overloaded, fall back to Sonnet
 # Sourced from Claude Code's FallbackTriggeredError pattern
 MODEL_FALLBACK_MAP = {
+    "claude-opus-4-7": "claude-sonnet-4-6",
     "claude-opus-4-6": "claude-sonnet-4-6",
     "claude-opus-4-5-20251101": "claude-sonnet-4-5-20250929",
     "claude-opus-4-1-20250805": "claude-sonnet-4-20250514",

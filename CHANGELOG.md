@@ -5,6 +5,31 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2026-04-16
+
+### Added
+
+- **Claude Opus 4.7** (`claude-opus-4-7`): new flagship model -- 1M token context window, 128K max output, $5/$25 per MTok, falls back to `claude-sonnet-4-6` on overload
+
+### Changed
+
+- **Model metadata corrections** (`src/constants.py`): aligned with Anthropic docs (`platform.claude.com/docs/en/about-claude/models/overview`)
+  - `claude-opus-4-6`: context window 200K -> 1M
+  - `claude-sonnet-4-6`: context window 200K -> 1M, max output 128K -> 64K (synchronous Messages API)
+  - `claude-opus-4-1-20250805`: max output 64K -> 32K
+  - `claude-opus-4-20250514`: max output 64K -> 32K
+- **Default model example**: `.env.example` `DEFAULT_MODEL` now matches code default (`claude-sonnet-4-6`)
+- **Landing page quickstart** (`src/main.py`): uses `claude-sonnet-4-6` instead of dated Sonnet 4.5 snapshot
+- **Debug endpoint example**: `example_valid_request.model` updated from retired `claude-3-sonnet-20240229` to `claude-sonnet-4-6`
+
+### Removed
+
+- **Retired models** removed from `CLAUDE_MODELS`, `MODEL_METADATA`, `MODEL_PRICING`:
+  - `claude-3-7-sonnet-20250219` (retired 2026-02-19)
+  - `claude-3-5-sonnet-20241022` (retired 2025-10-28)
+  - `claude-3-5-haiku-20241022` (retired 2026-02-19)
+- `_PRICING_HAIKU_35` constant (no remaining consumers)
+
 ## [2.6.0] - 2026-04-02
 
 ### Added
