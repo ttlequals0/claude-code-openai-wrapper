@@ -4,7 +4,15 @@ OpenAI API-compatible wrapper for Claude Code. Drop it in front of any OpenAI cl
 
 ## Version
 
-**Current:** 2.6.0
+**Current:** 2.7.0
+
+What's new in 2.7.0:
+- Added Claude Opus 4.7 (`claude-opus-4-7`) as the new flagship model
+- Removed retired models: `claude-3-7-sonnet-20250219`, `claude-3-5-sonnet-20241022`, `claude-3-5-haiku-20241022`
+- Corrected context window to 1M for `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-4-6`
+- Corrected max output to 32K for `claude-opus-4-1-20250805` and `claude-opus-4-20250514`
+- Corrected max output to 64K for `claude-sonnet-4-6` (synchronous Messages API)
+- Synced `.env.example` `DEFAULT_MODEL` with code default (`claude-sonnet-4-6`)
 
 What's new in 2.6.0:
 - OpenAI function calling simulation (tools/tool_choice parameters)
@@ -240,34 +248,28 @@ Claude-specific options via HTTP headers:
 
 ## Supported Models
 
-Model IDs, context windows, and pricing pulled from the open-sourced Claude Code CLI.
+Model IDs, context windows, and pricing are sourced from the Anthropic models docs (`platform.claude.com/docs/en/about-claude/models/overview`).
 
-### Claude 4.6 (Latest)
+### Latest
 | Model | Context | Max Output | Input $/MTok | Output $/MTok |
 |-------|---------|-----------|-------------|--------------|
-| `claude-opus-4-6` | 200K | 128K | $5 | $25 |
-| `claude-sonnet-4-6` (default) | 200K | 128K | $3 | $15 |
-
-### Claude 4.5
-| Model | Context | Max Output | Input $/MTok | Output $/MTok |
-|-------|---------|-----------|-------------|--------------|
-| `claude-opus-4-5-20251101` | 200K | 64K | $5 | $25 |
-| `claude-sonnet-4-5-20250929` | 200K | 64K | $3 | $15 |
+| `claude-opus-4-7` | 1M | 128K | $5 | $25 |
+| `claude-sonnet-4-6` (default) | 1M | 64K | $3 | $15 |
 | `claude-haiku-4-5-20251001` | 200K | 64K | $1 | $5 |
 
-### Claude 4.1 / 4.0
+### Legacy (active, consider migrating)
 | Model | Context | Max Output | Input $/MTok | Output $/MTok |
 |-------|---------|-----------|-------------|--------------|
-| `claude-opus-4-1-20250805` | 200K | 64K | $15 | $75 |
-| `claude-opus-4-20250514` | 200K | 64K | $15 | $75 |
-| `claude-sonnet-4-20250514` | 200K | 64K | $3 | $15 |
+| `claude-opus-4-6` | 1M | 128K | $5 | $25 |
+| `claude-opus-4-5-20251101` | 200K | 64K | $5 | $25 |
+| `claude-opus-4-1-20250805` | 200K | 32K | $15 | $75 |
+| `claude-sonnet-4-5-20250929` | 200K | 64K | $3 | $15 |
 
-### Claude 3.x
-| Model | Context | Max Output | Input $/MTok | Output $/MTok |
-|-------|---------|-----------|-------------|--------------|
-| `claude-3-7-sonnet-20250219` | 200K | 64K | $3 | $15 |
-| `claude-3-5-sonnet-20241022` | 200K | 8K | $3 | $15 |
-| `claude-3-5-haiku-20241022` | 200K | 8K | $0.80 | $4 |
+### Deprecated (retires 2026-06-15)
+| Model | Context | Max Output | Input $/MTok | Output $/MTok | Replacement |
+|-------|---------|-----------|-------------|--------------|-------------|
+| `claude-sonnet-4-20250514` | 200K | 64K | $3 | $15 | `claude-sonnet-4-6` |
+| `claude-opus-4-20250514` | 200K | 32K | $15 | $75 | `claude-opus-4-7` |
 
 ## Session Continuity
 
