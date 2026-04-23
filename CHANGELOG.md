@@ -5,6 +5,28 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.0] - 2026-04-23
+
+### Changed
+
+- **`claude-agent-sdk` bumped from `0.1.18` to `0.1.65`** (exact pin). 47 patch releases worth of CLI and subprocess-handling fixes. The rationale for bumping specifically now is the background-constant `error_during_execution` rate observed on 2.8.2 in production (~48/hr, `num_turns=2`, `usage.input_tokens=0`, `stderr_tail_chars=0` — CLI dying silently before reaching Claude). Notable fixes in the range:
+  - **0.1.52** — `control_cancel_request` handling (#751): in-flight hook callbacks properly cancelled when the CLI abandons them. A plausible source of 2-turn silent abort.
+  - **0.1.53** — string-prompt deadlock fix (#780): spawned `wait_for_result_and_end_input()` as a background task to avoid hangs on hook/MCP-heavy calls. Related symptom class.
+  - **0.1.57** — thinking-config serialization fix (#796): `thinking={"type":"adaptive"}` and `{"type":"disabled"}` now use `--thinking` flag not `--max-thinking-tokens`. Directly affects the path the 2.8.0 `WRAPPER_MAP_MAX_TOKENS_TO_THINKING` opt-in touches.
+  - **0.1.60** — `setting_sources=[]` no longer silently dropped (#822). W3C distributed-tracing propagation added.
+  - **0.1.51** — preserve dropped fields on `AssistantMessage` and `ResultMessage` for forward compatibility (#718); `ResultMessage.errors` field now populated (#749).
+  - Bundled Claude CLI advanced from 2.0.72 (at 0.1.18) to 2.1.118 (at 0.1.65) — 46 CLI versions of bug fixes, auth handling, and error reporting.
+
+### Tests
+
+- Full suite green on 0.1.65: 640 passed, 31 skipped. No test changes required — existing fixtures still match the dict shapes parse_claude_message consumes.
+
+### Expected runtime impact
+
+- Fewer `error_during_execution` subprocess failures (hypothesis to be confirmed post-deploy).
+- `ResultMessage.errors` may now carry actual strings on failure paths, so the `claude_sdk_error` log line's `errors=` field should start populating instead of always `errors=[]`. This is the data we've been missing.
+- `max_thinking_tokens` semantics on 0.1.57+ differ from 0.1.18 — our `WRAPPER_MAP_MAX_TOKENS_TO_THINKING=false` default makes this a no-op, but anyone opting in should retest.
+
 ## [2.8.2] - 2026-04-23
 
 Dependency bump to clear trivy HIGH/CRITICAL findings against 2.8.1.

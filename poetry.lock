@@ -419,17 +419,18 @@ files = [
 
 [[package]]
 name = "claude-agent-sdk"
-version = "0.1.18"
+version = "0.1.65"
 description = "Python SDK for Claude Code"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "claude_agent_sdk-0.1.18-py3-none-macosx_11_0_arm64.whl", hash = "sha256:9e45b4e3c20c072c3e3325fa60bab9a4b5a7cbbce64ca274b8d7d0af42dd9dd8"},
-    {file = "claude_agent_sdk-0.1.18-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:3c41bd8f38848609ae0d5da8d7327a4c2d7057a363feafb6fd70df611ea204cc"},
-    {file = "claude_agent_sdk-0.1.18-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:983f15e51253f40c55136a86d7cc63e023a3576428b05fa1459093d461b2d215"},
-    {file = "claude_agent_sdk-0.1.18-py3-none-win_amd64.whl", hash = "sha256:36f5b84d5c3c8773ee9b56aeb5ab345d1033231db37f80d1f20ac15239bef41c"},
-    {file = "claude_agent_sdk-0.1.18.tar.gz", hash = "sha256:4fcb8730cc77dea562fbe9aa48c65eced3ef58a6bb1f34f77e50e8258902477d"},
+    {file = "claude_agent_sdk-0.1.65-py3-none-macosx_11_0_arm64.whl", hash = "sha256:e9f509dbe37eceb319c2e4ece62bf1a05ba4c620f3ec6e42b3d880e86a0694e6"},
+    {file = "claude_agent_sdk-0.1.65-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:fb3a64e7c3638d48a94fcd33f4364d43a5f2f7e5e79ba208e22cf52696a362b1"},
+    {file = "claude_agent_sdk-0.1.65-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:345b9d5a09a4e55df5ca43810a01f9a0f5f2cda38ecbe1b512d9c17fb941704a"},
+    {file = "claude_agent_sdk-0.1.65-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:bbf56628ba78f034ceafca62f1edb3d10677fb38713f17cd129faab87ee7489b"},
+    {file = "claude_agent_sdk-0.1.65-py3-none-win_amd64.whl", hash = "sha256:92d1dc54f84ed487996e4a89857693317ea7d1e9705b8f0ea5015d3f3fb5913a"},
+    {file = "claude_agent_sdk-0.1.65.tar.gz", hash = "sha256:dc9d6c41b004e435e75d1467ddfd1187a1612f000763092dc8e0b727d3300a8d"},
 ]
 
 [package.dependencies]
@@ -439,6 +440,8 @@ typing-extensions = {version = ">=4.0.0", markers = "python_version < \"3.11\""}
 
 [package.extras]
 dev = ["anyio[trio] (>=4.0.0)", "mypy (>=1.0.0)", "pytest (>=7.0.0)", "pytest-asyncio (>=0.20.0)", "pytest-cov (>=4.0.0)", "ruff (>=0.1.0)"]
+examples = ["asyncpg (>=0.27.0)", "boto3 (>=1.28.0)", "fakeredis (>=2.20.0)", "moto[s3] (>=5.0.0)", "redis (>=4.2.0)"]
+otel = ["opentelemetry-api (>=1.20.0)"]
 
 [[package]]
 name = "click"
@@ -3085,4 +3088,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10"
-content-hash = "1e5fb8a0373bdada8729407fe03cc53f0f646264b8049b11d2bc055581aae971"
+content-hash = "ea9f0ac7a287d7a5e60a5fc3e09ae33c53b3fc99a5d1a192cb3eff7f908cb363"

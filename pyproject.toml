@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "claude-code-openai-wrapper"
-version = "2.8.2"
+version = "2.9.0"
 description = "OpenAI API-compatible wrapper for Claude Code"
 authors = ["Richard Atkinson <richardatk01@gmail.com>"]
 readme = "README.md"
@@ -19,12 +19,11 @@ python-dotenv = "^1.0.1"
 httpx = "^0.27.2"
 sse-starlette = "^2.1.3"
 python-multipart = "^0.0.22"
-# Pin the SDK exactly. The caret range (`^0.1.18`) resolved to whatever was
-# the latest 0.1.x at install time, letting semantics drift between Docker
-# builds without a code change (0.1.57 changed how thinking config is
-# serialized to the CLI). Bump this pin deliberately and regenerate
-# poetry.lock in the same commit. Latest upstream at time of pin: 0.1.65.
-claude-agent-sdk = "0.1.18"
+# Pin the SDK exactly. Bump deliberately and regenerate poetry.lock in the
+# same commit so Docker builds stay reproducible. 2.9.0 bump from 0.1.18 to
+# 0.1.65 to pull in 47 patch releases worth of CLI fixes aimed at the
+# silent `error_during_execution` path observed on 2.8.2.
+claude-agent-sdk = "0.1.65"
 slowapi = "^0.1.9"
 
 # Security floors for transitive dependencies. Each one pinned here is a
