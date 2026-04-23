@@ -5,6 +5,25 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.1] - 2026-04-23
+
+Hotfix on top of 2.8.0 after observing breaker cascade during live
+reprocessing. Three small fixes; no new behavior.
+
+### Fixed
+
+- **Structured log extras now render in plain-text logs** (`src/main.py`): replaced every `logger.xxx("event", extra={...})` call with `logger.xxx(_kv("event", **fields))`. The wrapper's default format is `%(asctime)s - %(name)s - %(levelname)s - %(message)s` with no extras-printer, so `circuit_breaker_open`, `completion_result`, `claude_sdk_error*`, `claude_sdk_assistant_error`, and the streaming-path variants were all shipping to Loki with the state dict silently dropped. They now serialize inline as `event key=value key=value ...`.
+- **Circuit breaker defaults loosened** (`src/circuit_breaker.py`): `min_requests_for_trip` raised from 10 to 20; `failure_ratio_threshold` raised from 0.5 to 0.75. The previous values tripped mid-way through a single episode's 6-8 detection windows when the upstream SDK returned a transient burst of `error_during_execution` (5/10 = 0.5), turning a recoverable hiccup into a full-episode outage via 503 cascade. All thresholds plus enable-state are now env-configurable: `WRAPPER_CIRCUIT_BREAKER_ENABLED`, `WRAPPER_CIRCUIT_BREAKER_THRESHOLD`, `WRAPPER_CIRCUIT_BREAKER_MIN_REQUESTS`, `WRAPPER_CIRCUIT_BREAKER_OPEN_SECONDS`, `WRAPPER_CIRCUIT_BREAKER_WINDOW_SECONDS`. Setting `WRAPPER_CIRCUIT_BREAKER_ENABLED=false` short-circuits both `allow_request()` and `record()`, acting as a kill switch for situations where the breaker itself is the problem.
+
+### Added
+
+- **CLI subprocess stderr capture** (`src/claude_cli.py`): bounded ring buffer (40 lines) installed as `ClaudeAgentOptions.stderr` callback on every request. On non-success `ResultMessage`, the tail is logged at WARNING level with the session id and num_turns, AND attached to the yielded dict as `stderr_tail` so downstream `parse_claude_message` forwards it onto `ClaudeResultError.stderr_tail`. The `chat_completions` error handler now logs it alongside the `claude_sdk_error` k/v line. Fixes the 2.8.0 gap where `error_during_execution` with `input_tokens=0, num_turns=2` gave us no insight into WHY the CLI subprocess died.
+
+### Changed
+
+- `ClaudeResultError` gained a `stderr_tail` attribute (default `None`).
+- Breaker snapshot dict now also includes `enabled` and `min_requests_for_trip` so the snapshot body on `503 circuit_breaker_open` responses matches what the env var set.
+
 ## [2.8.0] - 2026-04-23
 
 ### Fixed

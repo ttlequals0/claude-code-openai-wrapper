@@ -16,6 +16,7 @@ either accept independent breaker state or place a shared breaker
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections import deque
@@ -23,12 +24,80 @@ from dataclasses import dataclass
 from typing import Deque, Tuple
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("true", "1", "yes", "on")
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class CircuitBreakerConfig:
+    """Breaker thresholds.
+
+    Defaults tuned from the MinusPod incident on 2026-04-23: the original
+    ``min_requests_for_trip=10, failure_ratio_threshold=0.5`` tripped mid-way
+    through a single episode's 6-8 window detection sequence, turning a
+    recoverable upstream hiccup into a full-episode outage. The new defaults
+    (20 / 0.75) require sustained failure across multiple caller-initiated
+    retries before the breaker shuts the door.
+
+    All fields respect env overrides:
+      WRAPPER_CIRCUIT_BREAKER_WINDOW_SECONDS
+      WRAPPER_CIRCUIT_BREAKER_THRESHOLD
+      WRAPPER_CIRCUIT_BREAKER_MIN_REQUESTS
+      WRAPPER_CIRCUIT_BREAKER_OPEN_SECONDS
+    """
+
     window_seconds: float = 60.0
-    failure_ratio_threshold: float = 0.5
-    min_requests_for_trip: int = 10
+    failure_ratio_threshold: float = 0.75
+    min_requests_for_trip: int = 20
     open_seconds: float = 30.0
+
+    @classmethod
+    def from_env(cls) -> "CircuitBreakerConfig":
+        return cls(
+            window_seconds=_env_float(
+                "WRAPPER_CIRCUIT_BREAKER_WINDOW_SECONDS", 60.0
+            ),
+            failure_ratio_threshold=_env_float(
+                "WRAPPER_CIRCUIT_BREAKER_THRESHOLD", 0.75
+            ),
+            min_requests_for_trip=_env_int(
+                "WRAPPER_CIRCUIT_BREAKER_MIN_REQUESTS", 20
+            ),
+            open_seconds=_env_float(
+                "WRAPPER_CIRCUIT_BREAKER_OPEN_SECONDS", 30.0
+            ),
+        )
+
+
+def circuit_breaker_enabled() -> bool:
+    """When ``WRAPPER_CIRCUIT_BREAKER_ENABLED=false`` the breaker module-level
+    singleton always answers ``allow_request() == True`` and ``record()`` is a
+    no-op. Used as a kill switch while the upstream SDK is misbehaving and the
+    breaker would just amplify the outage for every concurrent caller."""
+    return _env_bool("WRAPPER_CIRCUIT_BREAKER_ENABLED", True)
 
 
 class CircuitBreakerState:
@@ -46,8 +115,13 @@ class CircuitBreaker:
     through; its outcome either closes or re-opens the breaker.
     """
 
-    def __init__(self, config: CircuitBreakerConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: CircuitBreakerConfig | None = None,
+        enabled: bool | None = None,
+    ) -> None:
         self._cfg = config or CircuitBreakerConfig()
+        self._enabled = enabled if enabled is not None else True
         self._history: Deque[Tuple[float, bool]] = deque()
         self._lock = threading.Lock()
         self._state = CircuitBreakerState.CLOSED
@@ -68,6 +142,8 @@ class CircuitBreaker:
         return n, failures / n
 
     def allow_request(self) -> bool:
+        if not self._enabled:
+            return True
         now = time.monotonic()
         with self._lock:
             if self._state == CircuitBreakerState.OPEN:
@@ -90,6 +166,8 @@ class CircuitBreaker:
             return True
 
     def record(self, success: bool) -> None:
+        if not self._enabled:
+            return
         now = time.monotonic()
         with self._lock:
             self._history.append((now, success))
@@ -123,14 +201,21 @@ class CircuitBreaker:
             n, ratio = self._failure_ratio_locked(now)
             return {
                 "state": self._state,
+                "enabled": self._enabled,
                 "window_size": n,
                 "failure_ratio": round(ratio, 3),
                 "threshold": self._cfg.failure_ratio_threshold,
+                "min_requests_for_trip": self._cfg.min_requests_for_trip,
                 "window_seconds": self._cfg.window_seconds,
                 "opened_at_monotonic": self._opened_at,
             }
 
 
-# Module-level singleton used by the completions handler. Replace or wrap
-# this if tests need isolated state.
-sdk_circuit_breaker = CircuitBreaker()
+# Module-level singleton used by the completions handler. Config + enabled
+# flag both come from env at import time so the same image can be tuned
+# without a code change (WRAPPER_CIRCUIT_BREAKER_ENABLED, _THRESHOLD,
+# _MIN_REQUESTS, _OPEN_SECONDS, _WINDOW_SECONDS).
+sdk_circuit_breaker = CircuitBreaker(
+    config=CircuitBreakerConfig.from_env(),
+    enabled=circuit_breaker_enabled(),
+)

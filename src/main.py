@@ -78,6 +78,32 @@ VERBOSE = os.getenv("VERBOSE", "false").lower() in ("true", "1", "yes", "on")
 # assistant message, which silently produced bad output for OpenAI clients.
 DEFAULT_MAX_TURNS_NO_TOOLS = int(os.getenv("WRAPPER_DEFAULT_MAX_TURNS", "3"))
 
+
+def _kv(event: str, **fields: Any) -> str:
+    """Format a structured log line as "event key=value key=value ...".
+
+    The wrapper's default logging format is plain text (see logging.basicConfig
+    above) and drops ``logger.xxx(msg, extra={...})`` payloads entirely. That
+    sent every structured log line to /dev/null -- we'd emit
+    ``circuit_breaker_open`` with no breaker state attached, forcing ops to
+    inspect response bodies to see what happened. Building the key=value pairs
+    into the message string itself is the cheapest way to keep the data
+    visible without reaching for a full JSON logger.
+
+    ``None`` values are skipped so we don't spam ``stop_reason=None``. Values
+    are repr'd when they contain whitespace or equals signs so a grep for
+    ``key=value`` still works unambiguously.
+    """
+    parts = [event]
+    for key, value in fields.items():
+        if value is None:
+            continue
+        text = str(value)
+        if any(ch.isspace() or ch == "=" for ch in text):
+            text = repr(text)
+        parts.append(f"{key}={text}")
+    return " ".join(parts)
+
 # Set logging level based on debug/verbose mode
 log_level = logging.DEBUG if (DEBUG_MODE or VERBOSE) else logging.INFO
 logging.basicConfig(level=log_level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -513,15 +539,13 @@ def _build_error_max_turns_response(
     finish_reason='length' and empty content. Clients see a well-formed
     response and can decide whether to retry with different parameters
     rather than receiving silent garbage."""
-    logger.warning(
+    logger.warning(_kv(
         "claude_sdk_error_max_turns",
-        extra={
-            "request_id": request_id,
-            "num_turns": err.num_turns,
-            "stop_reason": err.stop_reason,
-            "errors": err.errors,
-        },
-    )
+        request_id=request_id,
+        num_turns=err.num_turns,
+        stop_reason=err.stop_reason,
+        errors=err.errors,
+    ))
     response = ChatCompletionResponse(
         id=request_id,
         model=model,
@@ -544,16 +568,20 @@ def _build_sdk_error_response(
     backoff. Structured body includes the SDK subtype and any errors so
     callers can tell the difference between a max-turns overflow and a
     transport failure."""
-    logger.error(
+    logger.error(_kv(
         "claude_sdk_error",
-        extra={
-            "request_id": request_id,
-            "subtype": err.subtype,
-            "num_turns": err.num_turns,
-            "errors": err.errors,
-            "error_message": err.error_message,
-        },
-    )
+        request_id=request_id,
+        subtype=err.subtype,
+        num_turns=err.num_turns,
+        errors=err.errors,
+        error_message=err.error_message,
+        stderr_tail_chars=len(err.stderr_tail or ""),
+    ))
+    if err.stderr_tail:
+        logger.error(
+            f"claude_sdk_error stderr tail (request_id={request_id}):\n"
+            f"{err.stderr_tail}"
+        )
     return JSONResponse(
         status_code=502,
         content={
@@ -594,15 +622,13 @@ def _build_assistant_error_response(
         # Conservative default. Callers that want a smarter backoff should
         # inspect upstream rate-limit headers once the SDK exposes them.
         headers = {"Retry-After": "30"}
-    logger.warning(
+    logger.warning(_kv(
         "claude_sdk_assistant_error",
-        extra={
-            "request_id": request_id,
-            "subtype": err.subtype,
-            "errors": err.errors,
-            "status": status,
-        },
-    )
+        request_id=request_id,
+        subtype=err.subtype,
+        errors=err.errors,
+        status=status,
+    ))
     return JSONResponse(
         status_code=status,
         headers=headers,
@@ -978,24 +1004,20 @@ async def generate_streaming_response(
                     model=request.model,
                     choices=[StreamChoice(index=0, delta={}, finish_reason="length")],
                 )
-                logger.warning(
+                logger.warning(_kv(
                     "claude_sdk_error_max_turns_stream",
-                    extra={
-                        "request_id": request_id,
-                        "num_turns": sdk_error.num_turns,
-                    },
-                )
+                    request_id=request_id,
+                    num_turns=sdk_error.num_turns,
+                ))
                 yield f"data: {final_chunk.model_dump_json()}\n\n"
                 yield "data: [DONE]\n\n"
             else:
-                logger.error(
+                logger.error(_kv(
                     "claude_sdk_error_stream",
-                    extra={
-                        "request_id": request_id,
-                        "subtype": sdk_error.subtype,
-                        "errors": sdk_error.errors,
-                    },
-                )
+                    request_id=request_id,
+                    subtype=sdk_error.subtype,
+                    errors=sdk_error.errors,
+                ))
                 err_payload = {
                     "error": {
                         "message": sdk_error.error_message
@@ -1074,7 +1096,7 @@ async def chat_completions(
     # breaker half-opens after open_seconds and lets a single probe through.
     if not sdk_circuit_breaker.allow_request():
         snapshot = sdk_circuit_breaker.snapshot()
-        logger.warning("circuit_breaker_open", extra=snapshot)
+        logger.warning(_kv("circuit_breaker_open", **snapshot))
         return JSONResponse(
             status_code=503,
             headers={"Retry-After": "30"},
@@ -1301,22 +1323,20 @@ async def chat_completions(
             # triage a single `| json | subtype=...` query instead of grepping
             # DEBUG for num_turns and friends.
             metadata = claude_cli.extract_metadata(chunks)
-            logger.info(
+            logger.info(_kv(
                 "completion_result",
-                extra={
-                    "request_id": request_id,
-                    "session_id": metadata.get("session_id") or actual_session_id,
-                    "subtype": "success",
-                    "num_turns": metadata.get("num_turns"),
-                    "duration_ms": metadata.get("duration_ms"),
-                    "total_cost_usd": metadata.get("total_cost_usd"),
-                    "is_error": False,
-                    "finish_reason": finish_reason,
-                    "model": request_body.model,
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                },
-            )
+                request_id=request_id,
+                session_id=metadata.get("session_id") or actual_session_id,
+                subtype="success",
+                num_turns=metadata.get("num_turns"),
+                duration_ms=metadata.get("duration_ms"),
+                total_cost_usd=metadata.get("total_cost_usd"),
+                is_error=False,
+                finish_reason=finish_reason,
+                model=request_body.model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            ))
             sdk_circuit_breaker.record(success=True)
 
             return response
@@ -1401,10 +1421,10 @@ async def anthropic_messages(
             raw_assistant_content = claude_cli.parse_claude_message(chunks)
         except ClaudeResultError as err:
             if err.subtype == "error_max_turns":
-                logger.warning(
+                logger.warning(_kv(
                     "claude_sdk_error_max_turns_anthropic",
-                    extra={"request_id": "", "num_turns": err.num_turns},
-                )
+                    num_turns=err.num_turns,
+                ))
                 return AnthropicMessagesResponse(
                     model=request_body.model,
                     content=[AnthropicTextBlock(text="")],

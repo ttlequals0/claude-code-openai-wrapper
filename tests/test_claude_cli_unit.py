@@ -225,6 +225,31 @@ class TestClaudeCodeCLIParseMessage:
             cli.parse_claude_message(messages)
         assert "rate_limited_by_upstream" in excinfo.value.errors
 
+    def test_stderr_tail_propagates_through_result_error(self, cli_class):
+        """The run_completion loop copies the CLI subprocess's captured
+        stderr onto the ResultMessage dict; parse_claude_message must forward
+        it onto the ClaudeResultError so the HTTP layer can log the actual
+        reason the CLI died."""
+        from src.claude_cli import ClaudeResultError
+
+        cli = MagicMock()
+        cli.parse_claude_message = cli_class.parse_claude_message.__get__(cli, cli_class)
+
+        stderr_tail = "Error: auth rejected\nnode:internal/abort\n"
+        messages = [
+            {
+                "subtype": "error_during_execution",
+                "is_error": False,
+                "num_turns": 2,
+                "duration_ms": 2000,
+                "result": None,
+                "stderr_tail": stderr_tail,
+            },
+        ]
+        with pytest.raises(ClaudeResultError) as excinfo:
+            cli.parse_claude_message(messages)
+        assert excinfo.value.stderr_tail == stderr_tail
+
 
 class TestClaudeCodeCLIExtractMetadata:
     """Test ClaudeCodeCLI.extract_metadata()"""

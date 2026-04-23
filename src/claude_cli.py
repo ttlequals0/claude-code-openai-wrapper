@@ -70,12 +70,14 @@ class ClaudeResultError(Exception):
         errors: Optional[List[str]] = None,
         stop_reason: Optional[str] = None,
         error_message: Optional[str] = None,
+        stderr_tail: Optional[str] = None,
     ):
         self.subtype = subtype
         self.num_turns = num_turns
         self.errors = errors or []
         self.stop_reason = stop_reason
         self.error_message = error_message
+        self.stderr_tail = stderr_tail
         detail = error_message or (self.errors[0] if self.errors else subtype)
         super().__init__(
             f"Claude SDK returned {subtype} after {num_turns} turns: {detail}"
@@ -189,8 +191,23 @@ class ClaudeCodeCLI:
                     os.environ[key] = value
 
             try:
+                # Capture the CLI subprocess's stderr into a bounded ring so we
+                # can attach it to non-success ResultMessage log lines. The
+                # bundled Claude CLI prints its real failure reason
+                # (auth rejection, permission denial, network error) to
+                # stderr, but previously we only saw the typed SDK error
+                # subtype (``error_during_execution``) and zero context.
+                stderr_buffer: List[str] = []
+                _STDERR_MAX_LINES = 40
+
+                def _stderr_capture(line: str) -> None:
+                    stderr_buffer.append(line)
+                    if len(stderr_buffer) > _STDERR_MAX_LINES:
+                        del stderr_buffer[: len(stderr_buffer) - _STDERR_MAX_LINES]
+
                 # Build SDK options
                 options = ClaudeAgentOptions(max_turns=max_turns, cwd=self.cwd)
+                options.stderr = _stderr_capture
 
                 # Set model if specified
                 if model:
@@ -250,6 +267,34 @@ class ClaudeCodeCLI:
                                         except:
                                             pass
                                 logger.debug(f"Converted message dict: {message_dict}")
+
+                                # If the SDK is reporting a non-success result,
+                                # surface whatever the CLI subprocess wrote to
+                                # stderr so triage doesn't have to guess why it
+                                # died. Attach to the dict too so callers
+                                # (parse_claude_message, HTTP layer) can relay it.
+                                subtype = message_dict.get("subtype")
+                                is_error = message_dict.get("is_error") is True
+                                if (
+                                    subtype in _ERROR_RESULT_SUBTYPES
+                                    or is_error
+                                ):
+                                    stderr_tail = "\n".join(stderr_buffer).strip()
+                                    if stderr_tail:
+                                        logger.warning(
+                                            f"SDK {subtype} stderr tail "
+                                            f"(session={message_dict.get('session_id')}, "
+                                            f"num_turns={message_dict.get('num_turns')}):\n"
+                                            f"{stderr_tail}"
+                                        )
+                                        message_dict["stderr_tail"] = stderr_tail
+                                    else:
+                                        logger.warning(
+                                            f"SDK {subtype} with empty stderr "
+                                            f"(session={message_dict.get('session_id')}, "
+                                            f"num_turns={message_dict.get('num_turns')})"
+                                        )
+
                                 yield message_dict
                             else:
                                 yield message
@@ -326,6 +371,7 @@ class ClaudeCodeCLI:
                     errors=message.get("errors"),
                     stop_reason=message.get("stop_reason"),
                     error_message=message.get("error_message"),
+                    stderr_tail=message.get("stderr_tail"),
                 )
 
         # AssistantMessage.error carries upstream-API failure details (rate

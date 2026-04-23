@@ -111,3 +111,75 @@ class TestCircuitBreakerSnapshot:
         assert snap["state"] == CircuitBreakerState.CLOSED
         assert snap["window_size"] == 2
         assert snap["failure_ratio"] == 0.5
+        assert snap["enabled"] is True
+        assert snap["min_requests_for_trip"] == 4
+
+
+class TestCircuitBreakerDisabled:
+    """When disabled, allow_request always returns True and record is a no-op.
+    Used as a kill switch while the upstream SDK is degraded and the breaker
+    itself would amplify an outage by shedding otherwise-recoverable load."""
+
+    def test_disabled_allows_all_requests(self):
+        b = CircuitBreaker(CircuitBreakerConfig(min_requests_for_trip=2), enabled=False)
+        # Record enough failures to normally trip an enabled breaker.
+        for _ in range(10):
+            assert b.allow_request() is True
+            b.record(success=False)
+        # Still closed, still allowing.
+        assert b.state == CircuitBreakerState.CLOSED
+        assert b.allow_request() is True
+
+
+class TestCircuitBreakerConfigFromEnv:
+    """Env-var overrides let ops retune without a rebuild."""
+
+    def test_env_overrides_defaults(self, monkeypatch):
+        monkeypatch.setenv("WRAPPER_CIRCUIT_BREAKER_WINDOW_SECONDS", "120")
+        monkeypatch.setenv("WRAPPER_CIRCUIT_BREAKER_THRESHOLD", "0.9")
+        monkeypatch.setenv("WRAPPER_CIRCUIT_BREAKER_MIN_REQUESTS", "50")
+        monkeypatch.setenv("WRAPPER_CIRCUIT_BREAKER_OPEN_SECONDS", "45")
+
+        cfg = CircuitBreakerConfig.from_env()
+        assert cfg.window_seconds == 120.0
+        assert cfg.failure_ratio_threshold == 0.9
+        assert cfg.min_requests_for_trip == 50
+        assert cfg.open_seconds == 45.0
+
+    def test_env_defaults_kick_in_when_unset(self, monkeypatch):
+        for name in (
+            "WRAPPER_CIRCUIT_BREAKER_WINDOW_SECONDS",
+            "WRAPPER_CIRCUIT_BREAKER_THRESHOLD",
+            "WRAPPER_CIRCUIT_BREAKER_MIN_REQUESTS",
+            "WRAPPER_CIRCUIT_BREAKER_OPEN_SECONDS",
+        ):
+            monkeypatch.delenv(name, raising=False)
+
+        cfg = CircuitBreakerConfig.from_env()
+        # Defaults tightened for MinusPod incident: 20 requests / 0.75 ratio.
+        assert cfg.min_requests_for_trip == 20
+        assert cfg.failure_ratio_threshold == 0.75
+        assert cfg.window_seconds == 60.0
+        assert cfg.open_seconds == 30.0
+
+    def test_invalid_env_value_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("WRAPPER_CIRCUIT_BREAKER_MIN_REQUESTS", "not-a-number")
+        cfg = CircuitBreakerConfig.from_env()
+        assert cfg.min_requests_for_trip == 20
+
+
+class TestCircuitBreakerEnabledFn:
+    def test_env_flag_toggle(self, monkeypatch):
+        from src.circuit_breaker import circuit_breaker_enabled
+
+        monkeypatch.delenv("WRAPPER_CIRCUIT_BREAKER_ENABLED", raising=False)
+        assert circuit_breaker_enabled() is True
+
+        monkeypatch.setenv("WRAPPER_CIRCUIT_BREAKER_ENABLED", "false")
+        assert circuit_breaker_enabled() is False
+
+        monkeypatch.setenv("WRAPPER_CIRCUIT_BREAKER_ENABLED", "0")
+        assert circuit_breaker_enabled() is False
+
+        monkeypatch.setenv("WRAPPER_CIRCUIT_BREAKER_ENABLED", "yes")
+        assert circuit_breaker_enabled() is True
