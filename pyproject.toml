@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "claude-code-openai-wrapper"
-version = "2.7.0"
+version = "2.9.0"
 description = "OpenAI API-compatible wrapper for Claude Code"
 authors = ["Richard Atkinson <richardatk01@gmail.com>"]
 readme = "README.md"
@@ -9,15 +9,40 @@ packages = [{include = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"
-fastapi = "^0.115.0"
+# fastapi bumped from ^0.115.0 so the transitive starlette floor can reach
+# >=0.49.1 (CVE-2025-62727). 0.115.x caps starlette at <0.47; 0.118.x
+# caps at <0.49; 0.119.x allows 0.49. Range stays under the next major.
+fastapi = ">=0.119.0,<1.0"
 uvicorn = {extras = ["standard"], version = "^0.32.0"}
 pydantic = "^2.10.0"
 python-dotenv = "^1.0.1"
 httpx = "^0.27.2"
 sse-starlette = "^2.1.3"
-python-multipart = "^0.0.18"
-claude-agent-sdk = "^0.1.18"
+python-multipart = "^0.0.22"
+# Pin the SDK exactly. Bump deliberately and regenerate poetry.lock in the
+# same commit so Docker builds stay reproducible. 2.9.0 bump from 0.1.18 to
+# 0.1.65 to pull in 47 patch releases worth of CLI fixes aimed at the
+# silent `error_during_execution` path observed on 2.8.2.
+claude-agent-sdk = "0.1.65"
 slowapi = "^0.1.9"
+
+# Security floors for transitive dependencies. Each one pinned here is a
+# CVE that showed up in a trivy HIGH/CRITICAL scan against a prior build
+# image and has no fix until the transitive version is advanced past the
+# vulnerable one. Poetry resolves these against the rest of the graph and
+# fails the lock step if they're incompatible with their parents, which is
+# the early warning we want for each dep bump.
+# - starlette: fastapi 0.115.x allows 0.49.x
+# - urllib3: httpx 0.27.x pulls via requests/certifi chain
+# - cryptography, PyJWT, Authlib, mcp: via claude-agent-sdk 0.1.18
+# - nltk: via the bundled claude CLI
+starlette = ">=0.49.1"
+urllib3 = ">=2.6.3"
+cryptography = ">=46.0.5"
+pyjwt = ">=2.12.0"
+authlib = ">=1.6.9"
+mcp = ">=1.23.0"
+nltk = ">=3.9.3"
 
 [tool.poetry.group.dev.dependencies]
 black = "^24.0.0"

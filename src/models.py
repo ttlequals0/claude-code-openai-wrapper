@@ -1,3 +1,4 @@
+import os
 from typing import List, Optional, Dict, Any, Union, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 from datetime import datetime
@@ -13,6 +14,24 @@ def get_default_model():
     from src.constants import DEFAULT_MODEL
 
     return DEFAULT_MODEL
+
+
+def _map_max_tokens_to_thinking() -> bool:
+    """Whether to map OpenAI max_tokens to Claude's max_thinking_tokens.
+
+    Historically the wrapper sent ``max_tokens`` as ``max_thinking_tokens``
+    because the Claude Agent SDK has no direct output-length cap. That mapping
+    is semantically wrong (OpenAI max_tokens caps response length; thinking
+    tokens cap reasoning budget) and caused short prompts to either bust the
+    max_turns ceiling or return truncated output. The mapping is now opt-in
+    via ``WRAPPER_MAP_MAX_TOKENS_TO_THINKING=true``; default is off.
+    """
+    return os.getenv("WRAPPER_MAP_MAX_TOKENS_TO_THINKING", "false").lower() in (
+        "true",
+        "1",
+        "yes",
+        "on",
+    )
 
 
 class ContentPart(BaseModel):
@@ -158,9 +177,17 @@ class ChatCompletionRequest(BaseModel):
 
         if self.max_tokens is not None or self.max_completion_tokens is not None:
             max_val = self.max_completion_tokens or self.max_tokens
-            info_messages.append(
-                f"max_tokens={max_val} will be mapped to max_thinking_tokens (best-effort)"
-            )
+            if _map_max_tokens_to_thinking():
+                info_messages.append(
+                    f"max_tokens={max_val} will be mapped to max_thinking_tokens "
+                    "(legacy behavior; WRAPPER_MAP_MAX_TOKENS_TO_THINKING=true)"
+                )
+            else:
+                info_messages.append(
+                    f"max_tokens={max_val} is ignored (Claude Agent SDK has no "
+                    "output-length cap; set WRAPPER_MAP_MAX_TOKENS_TO_THINKING=true "
+                    "to restore the legacy max_thinking_tokens mapping)"
+                )
 
         if self.presence_penalty != 0:
             warnings.append(
@@ -233,14 +260,19 @@ class ChatCompletionRequest(BaseModel):
         if self.model:
             options["model"] = self.model
 
-        # Map max_tokens to max_thinking_tokens (best effort)
+        # OpenAI max_tokens is a response-length cap; the Claude Agent SDK has
+        # no direct equivalent. Historically we mapped it to max_thinking_tokens,
+        # which misused the parameter and caused callers sending small
+        # max_tokens (e.g. 500 for a short title prompt) to burn their budget
+        # on reasoning then bust max_turns before emitting the answer. The
+        # mapping is now off by default; opt in via
+        # WRAPPER_MAP_MAX_TOKENS_TO_THINKING=true to restore the old behavior.
         max_token_value = self.max_completion_tokens or self.max_tokens
-        if max_token_value is not None:
-            # Claude SDK doesn't have exact token limiting, but we can try max_thinking_tokens
-            # This is approximate and may not work as expected
+        if max_token_value is not None and _map_max_tokens_to_thinking():
             options["max_thinking_tokens"] = max_token_value
             logger.info(
-                f"Mapped max_tokens={max_token_value} to max_thinking_tokens (approximate behavior)"
+                f"Mapped max_tokens={max_token_value} to max_thinking_tokens "
+                "(legacy behavior; WRAPPER_MAP_MAX_TOKENS_TO_THINKING=true)"
             )
 
         # Use user field for session identification if provided

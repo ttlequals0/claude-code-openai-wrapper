@@ -2,6 +2,11 @@ version: '3.8'
 services:
   claude-wrapper:
     image: ttlequals0/claude-code-openai-wrapper:latest
+    # Build from local Dockerfile targeting the prod stage. Dev iteration
+    # should override with `target: dev` (or use `docker build --target dev`).
+    build:
+      context: .
+      target: prod
     container_name: claude-wrapper
     ports:
       - "8000:8000"
@@ -13,6 +18,16 @@ services:
     environment:
       - PORT=8000
       - MAX_TIMEOUT=600000
+      # Worker count for the prod image. Default 2.
+      # - UVICORN_WORKERS=2
+      # Default max_turns when the caller does not enable_tools. Raising from
+      # the legacy 1 to 3 prevents error_max_turns on short prompts where the
+      # agent engages extended thinking and needs a second turn to emit the
+      # final message.
+      # - WRAPPER_DEFAULT_MAX_TURNS=3
+      # Opt-in: map OpenAI max_tokens to Claude max_thinking_tokens (legacy
+      # behavior; now off by default because it's a semantic mismatch).
+      # - WRAPPER_MAP_MAX_TOKENS_TO_THINKING=false
       # Authentication (choose one method):
       # Option 1: Direct API key (recommended)
       # - ANTHROPIC_API_KEY=your-api-key

@@ -40,7 +40,8 @@ from src.models import (
     AnthropicTextBlock,
     AnthropicUsage,
 )
-from src.claude_cli import ClaudeCodeCLI
+from src.claude_cli import ClaudeCodeCLI, ClaudeResultError
+from src.circuit_breaker import sdk_circuit_breaker
 from src.message_adapter import MessageAdapter, JsonFenceStripper
 from src.function_calling import (
     build_tools_system_prompt,
@@ -70,6 +71,38 @@ load_dotenv()
 # Configure logging based on debug mode
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() in ("true", "1", "yes", "on")
 VERBOSE = os.getenv("VERBOSE", "false").lower() in ("true", "1", "yes", "on")
+
+# Default max_turns applied when the request does not enable tools. A value of 1
+# causes the Claude Agent SDK to return error_max_turns whenever the agent
+# engages extended thinking and then needs a second turn to emit the final
+# assistant message, which silently produced bad output for OpenAI clients.
+DEFAULT_MAX_TURNS_NO_TOOLS = int(os.getenv("WRAPPER_DEFAULT_MAX_TURNS", "3"))
+
+
+def _kv(event: str, **fields: Any) -> str:
+    """Format a structured log line as "event key=value key=value ...".
+
+    The wrapper's default logging format is plain text (see logging.basicConfig
+    above) and drops ``logger.xxx(msg, extra={...})`` payloads entirely. That
+    sent every structured log line to /dev/null -- we'd emit
+    ``circuit_breaker_open`` with no breaker state attached, forcing ops to
+    inspect response bodies to see what happened. Building the key=value pairs
+    into the message string itself is the cheapest way to keep the data
+    visible without reaching for a full JSON logger.
+
+    ``None`` values are skipped so we don't spam ``stop_reason=None``. Values
+    are repr'd when they contain whitespace or equals signs so a grep for
+    ``key=value`` still works unambiguously.
+    """
+    parts = [event]
+    for key, value in fields.items():
+        if value is None:
+            continue
+        text = str(value)
+        if any(ch.isspace() or ch == "=" for ch in text):
+            text = repr(text)
+        parts.append(f"{key}={text}")
+    return " ".join(parts)
 
 # Set logging level based on debug/verbose mode
 log_level = logging.DEBUG if (DEBUG_MODE or VERBOSE) else logging.INFO
@@ -153,9 +186,33 @@ claude_cli = ClaudeCodeCLI(
 )
 
 
+def _log_build_info() -> None:
+    """Log the SDK and bundled CLI versions baked into the image at build time.
+
+    Lets ops tell from Loki which SDK shipped in a given container without
+    shelling in. If /app/BUILD_INFO is missing (e.g. running from source),
+    we fall back to asking the installed package for its version.
+    """
+    try:
+        with open("/app/BUILD_INFO", "r") as f:
+            contents = f.read().strip()
+        logger.info(f"Build info:\n{contents}")
+        return
+    except FileNotFoundError:
+        pass
+    try:
+        import importlib.metadata
+
+        sdk_version = importlib.metadata.version("claude-agent-sdk")
+        logger.info(f"Build info: claude-agent-sdk={sdk_version} (no BUILD_INFO file)")
+    except Exception as e:
+        logger.warning(f"Build info unavailable: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Verify Claude Code authentication and CLI on startup."""
+    _log_build_info()
     logger.info("Verifying Claude Code authentication and CLI...")
 
     # Initialize model service (fetch models from API or use fallback)
@@ -461,14 +518,148 @@ def _build_claude_options(
 
     if not request.enable_tools:
         claude_options["disallowed_tools"] = CLAUDE_TOOLS
-        claude_options["max_turns"] = 1
-        logger.info("Tools disabled (default behavior for OpenAI compatibility)")
+        claude_options["max_turns"] = DEFAULT_MAX_TURNS_NO_TOOLS
+        logger.info(
+            f"Tools disabled (default behavior for OpenAI compatibility); "
+            f"max_turns={DEFAULT_MAX_TURNS_NO_TOOLS} "
+            f"(override via WRAPPER_DEFAULT_MAX_TURNS)"
+        )
     else:
         claude_options["allowed_tools"] = DEFAULT_ALLOWED_TOOLS
         claude_options["permission_mode"] = "bypassPermissions"
         logger.info(f"Tools enabled by user request: {DEFAULT_ALLOWED_TOOLS}")
 
     return claude_options
+
+
+def _build_error_max_turns_response(
+    request_id: str, model: str, err: ClaudeResultError
+) -> JSONResponse:
+    """Translate error_max_turns into a valid OpenAI chat completion with
+    finish_reason='length' and empty content. Clients see a well-formed
+    response and can decide whether to retry with different parameters
+    rather than receiving silent garbage."""
+    logger.warning(_kv(
+        "claude_sdk_error_max_turns",
+        request_id=request_id,
+        num_turns=err.num_turns,
+        stop_reason=err.stop_reason,
+        errors=err.errors,
+    ))
+    response = ChatCompletionResponse(
+        id=request_id,
+        model=model,
+        choices=[
+            Choice(
+                index=0,
+                message=Message(role="assistant", content=""),
+                finish_reason="length",
+            )
+        ],
+        usage=Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0),
+    )
+    return JSONResponse(status_code=200, content=response.model_dump())
+
+
+def _build_sdk_error_response(
+    request_id: str, model: str, err: ClaudeResultError
+) -> JSONResponse:
+    """Non-recoverable SDK result: return 502 so clients know to retry with
+    backoff. Structured body includes the SDK subtype and any errors so
+    callers can tell the difference between a max-turns overflow and a
+    transport failure."""
+    logger.error(_kv(
+        "claude_sdk_error",
+        request_id=request_id,
+        subtype=err.subtype,
+        num_turns=err.num_turns,
+        errors=err.errors,
+        error_message=err.error_message,
+        stderr_tail_chars=len(err.stderr_tail or ""),
+    ))
+    if err.stderr_tail:
+        logger.error(
+            f"claude_sdk_error stderr tail (request_id={request_id}):\n"
+            f"{err.stderr_tail}"
+        )
+    return JSONResponse(
+        status_code=502,
+        content={
+            "error": {
+                "message": err.error_message
+                or (err.errors[0] if err.errors else f"SDK returned {err.subtype}"),
+                "type": "upstream_sdk_error",
+                "code": err.subtype or "unknown",
+            }
+        },
+    )
+
+
+# Map AssistantMessage error literals to HTTP status codes so each upstream
+# failure mode surfaces with the right semantics instead of collapsing to 502:
+#   rate_limit -> 429 (retryable with backoff; callers should honor Retry-After)
+#   billing_error -> 402 (permanent until billing is resolved)
+#   authentication_failed -> 401 (permanent until auth is fixed)
+#   invalid_request -> 400 (client bug)
+#   server_error / unknown -> 502 (retry with backoff)
+_ASSISTANT_ERROR_STATUS = {
+    "assistant_rate_limit": 429,
+    "assistant_billing_error": 402,
+    "assistant_authentication_failed": 401,
+    "assistant_invalid_request": 400,
+    "assistant_server_error": 502,
+    "assistant_unknown": 502,
+}
+
+
+def _build_assistant_error_response(
+    request_id: str, model: str, err: ClaudeResultError
+) -> JSONResponse:
+    """Translate an AssistantMessage error to a status-coded OpenAI error."""
+    status = _ASSISTANT_ERROR_STATUS.get(err.subtype or "", 502)
+    headers = None
+    if status == 429:
+        # Conservative default. Callers that want a smarter backoff should
+        # inspect upstream rate-limit headers once the SDK exposes them.
+        headers = {"Retry-After": "30"}
+    logger.warning(_kv(
+        "claude_sdk_assistant_error",
+        request_id=request_id,
+        subtype=err.subtype,
+        errors=err.errors,
+        status=status,
+    ))
+    return JSONResponse(
+        status_code=status,
+        headers=headers,
+        content={
+            "error": {
+                "message": err.errors[0] if err.errors else str(err),
+                "type": "upstream_api_error",
+                "code": err.subtype or "unknown",
+            }
+        },
+    )
+
+
+def _handle_claude_result_error(
+    request_id: str, model: str, err: ClaudeResultError
+) -> JSONResponse:
+    """Route a ClaudeResultError to the right OpenAI-shaped response.
+
+    Records the outcome against the circuit breaker so a burst of SDK
+    failures across many requests trips the breaker and fails-fast future
+    traffic for a short cool-off period.
+    """
+    # error_max_turns still returned a 200 to the caller with finish_reason=
+    # length; treat it as upstream "bad" for breaker purposes because from a
+    # reliability perspective it's a failed completion.
+    sdk_circuit_breaker.record(success=False)
+    if err.subtype == "error_max_turns":
+        return _build_error_max_turns_response(request_id, model, err)
+    if err.subtype in _ASSISTANT_ERROR_STATUS:
+        return _build_assistant_error_response(request_id, model, err)
+    return _build_sdk_error_response(request_id, model, err)
 
 
 def _run_completion_kwargs(claude_options: Dict[str, Any], prompt: str, system_prompt: Optional[str], stream: bool) -> Dict[str, Any]:
@@ -789,15 +980,55 @@ async def generate_streaming_response(
             )
             yield f"data: {fallback_chunk.model_dump_json()}\n\n"
 
-        # Extract assistant response from all chunks
+        # Extract assistant response from all chunks. parse_claude_message
+        # raises ClaudeResultError on SDK error_max_turns / error_during_execution;
+        # emit a terminal SSE event with finish_reason='length' (max_turns) or an
+        # error payload (other), then close. Do NOT let sentinel text stream out.
         assistant_content = None
+        sdk_error: Optional[ClaudeResultError] = None
         if chunks_buffer:
-            assistant_content = claude_cli.parse_claude_message(chunks_buffer)
+            try:
+                assistant_content = claude_cli.parse_claude_message(chunks_buffer)
+            except ClaudeResultError as err:
+                sdk_error = err
 
             # Store in session if applicable
             if actual_session_id and assistant_content:
                 assistant_message = Message(role="assistant", content=assistant_content)
                 session_manager.add_assistant_response(actual_session_id, assistant_message)
+
+        if sdk_error is not None:
+            if sdk_error.subtype == "error_max_turns":
+                final_chunk = ChatCompletionStreamResponse(
+                    id=request_id,
+                    model=request.model,
+                    choices=[StreamChoice(index=0, delta={}, finish_reason="length")],
+                )
+                logger.warning(_kv(
+                    "claude_sdk_error_max_turns_stream",
+                    request_id=request_id,
+                    num_turns=sdk_error.num_turns,
+                ))
+                yield f"data: {final_chunk.model_dump_json()}\n\n"
+                yield "data: [DONE]\n\n"
+            else:
+                logger.error(_kv(
+                    "claude_sdk_error_stream",
+                    request_id=request_id,
+                    subtype=sdk_error.subtype,
+                    errors=sdk_error.errors,
+                ))
+                err_payload = {
+                    "error": {
+                        "message": sdk_error.error_message
+                        or (sdk_error.errors[0] if sdk_error.errors else f"SDK returned {sdk_error.subtype}"),
+                        "type": "upstream_sdk_error",
+                        "code": sdk_error.subtype or "unknown",
+                    }
+                }
+                yield f"data: {json.dumps(err_payload)}\n\n"
+                yield "data: [DONE]\n\n"
+            return
 
         # Prepare usage data if requested
         usage_data = None
@@ -859,6 +1090,28 @@ async def chat_completions(
             "help": "Check /v1/auth/status for detailed authentication information",
         }
         raise HTTPException(status_code=503, detail=error_detail)
+
+    # Circuit breaker check: if the SDK has been failing at >50% for a minute,
+    # fail-fast with 503 instead of forwarding another doomed request. The
+    # breaker half-opens after open_seconds and lets a single probe through.
+    if not sdk_circuit_breaker.allow_request():
+        snapshot = sdk_circuit_breaker.snapshot()
+        logger.warning(_kv("circuit_breaker_open", **snapshot))
+        return JSONResponse(
+            status_code=503,
+            headers={"Retry-After": "30"},
+            content={
+                "error": {
+                    "message": (
+                        "Upstream SDK is unhealthy (circuit breaker open). "
+                        "Retry after the window resets."
+                    ),
+                    "type": "circuit_breaker_open",
+                    "code": "circuit_open",
+                    "breaker": snapshot,
+                }
+            },
+        )
 
     try:
         request_id = f"chatcmpl-{os.urandom(8).hex()}"
@@ -967,8 +1220,14 @@ async def chat_completions(
             ):
                 chunks.append(chunk)
 
-            # Extract assistant message
-            raw_assistant_content = claude_cli.parse_claude_message(chunks)
+            # Extract assistant message. parse_claude_message raises
+            # ClaudeResultError when the SDK emits error_max_turns or other
+            # non-success ResultMessage, which we must surface as a proper
+            # OpenAI error response rather than HTTP 200 with sentinel text.
+            try:
+                raw_assistant_content = claude_cli.parse_claude_message(chunks)
+            except ClaudeResultError as err:
+                return _handle_claude_result_error(request_id, request_body.model, err)
 
             if not raw_assistant_content:
                 raise HTTPException(status_code=500, detail="No response from Claude Code")
@@ -1060,11 +1319,34 @@ async def chat_completions(
                 request_cache.set(request_dict, response_dict)
                 logger.debug(f"Cached response for request {request_id}")
 
+            # One structured info line per successful completion. Makes Grafana
+            # triage a single `| json | subtype=...` query instead of grepping
+            # DEBUG for num_turns and friends.
+            metadata = claude_cli.extract_metadata(chunks)
+            logger.info(_kv(
+                "completion_result",
+                request_id=request_id,
+                session_id=metadata.get("session_id") or actual_session_id,
+                subtype="success",
+                num_turns=metadata.get("num_turns"),
+                duration_ms=metadata.get("duration_ms"),
+                total_cost_usd=metadata.get("total_cost_usd"),
+                is_error=False,
+                finish_reason=finish_reason,
+                model=request_body.model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            ))
+            sdk_circuit_breaker.record(success=True)
+
             return response
 
     except HTTPException:
+        # HTTPException often represents a validated client error (401, 422);
+        # do not record it as an SDK-side failure on the breaker.
         raise
     except Exception as e:
+        sdk_circuit_breaker.record(success=False)
         logger.error(f"Chat completion error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1132,8 +1414,32 @@ async def anthropic_messages(
         ):
             chunks.append(chunk)
 
-        # Extract assistant message
-        raw_assistant_content = claude_cli.parse_claude_message(chunks)
+        # Extract assistant message. On SDK error_max_turns, map to the
+        # Anthropic stop_reason="max_tokens"; on any other SDK error, surface
+        # it as HTTP 502 instead of returning sentinel text as content.
+        try:
+            raw_assistant_content = claude_cli.parse_claude_message(chunks)
+        except ClaudeResultError as err:
+            if err.subtype == "error_max_turns":
+                logger.warning(_kv(
+                    "claude_sdk_error_max_turns_anthropic",
+                    num_turns=err.num_turns,
+                ))
+                return AnthropicMessagesResponse(
+                    model=request_body.model,
+                    content=[AnthropicTextBlock(text="")],
+                    stop_reason="max_tokens",
+                    usage=AnthropicUsage(input_tokens=0, output_tokens=0),
+                )
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "type": "upstream_sdk_error",
+                    "code": err.subtype or "unknown",
+                    "message": err.error_message
+                    or (err.errors[0] if err.errors else f"SDK returned {err.subtype}"),
+                },
+            )
 
         if not raw_assistant_content:
             raise HTTPException(status_code=500, detail="No response from Claude Code")
@@ -1253,6 +1559,74 @@ async def check_compatibility(request_body: ChatCompletionRequest):
 async def health_check(request: Request):
     """Health check endpoint."""
     return {"status": "healthy", "service": "claude-code-openai-wrapper"}
+
+
+# Rolling window of recent /healthz/deep probe outcomes used to compute a
+# short-term failure rate. Fixed-size deque keeps memory bounded.
+import collections  # noqa: E402 - placed here to keep the deep-health section self-contained
+_DEEP_HEALTH_WINDOW = collections.deque(maxlen=10)
+_DEEP_HEALTH_FAILURE_THRESHOLD = 0.20  # open breaker above 20% failure
+
+
+@app.get("/healthz/deep")
+async def healthz_deep(request: Request):
+    """End-to-end probe that actually exercises the completion path.
+
+    The existing /health endpoint only checks process liveness, which stayed
+    green during the week MinusPod was receiving '[Request interrupted by user]'
+    as chapter content. This probe sends a canned prompt, parses the
+    response, and reports unhealthy (HTTP 503) when the rolling failure
+    rate exceeds _DEEP_HEALTH_FAILURE_THRESHOLD. Use from an orchestrator's
+    livenessProbe / healthcheck to fail fast during upstream incidents.
+    """
+    started = asyncio.get_event_loop().time()
+    probe_ok = False
+    detail: Dict[str, Any] = {}
+
+    try:
+        chunks = []
+        async for chunk in claude_cli.run_completion(
+            prompt="Reply with the single word OK.",
+            system_prompt=None,
+            model=None,
+            stream=False,
+            max_turns=DEFAULT_MAX_TURNS_NO_TOOLS,
+            disallowed_tools=CLAUDE_TOOLS,
+        ):
+            chunks.append(chunk)
+
+        try:
+            content = claude_cli.parse_claude_message(chunks) or ""
+        except ClaudeResultError as err:
+            content = ""
+            detail["sdk_error_subtype"] = err.subtype
+
+        normalized = content.strip().rstrip(".").upper()
+        probe_ok = "OK" in normalized
+        detail["content_excerpt"] = content[:120]
+    except Exception as e:
+        detail["exception"] = type(e).__name__
+        detail["exception_message"] = str(e)
+        logger.warning(f"Deep health probe raised: {e}")
+
+    _DEEP_HEALTH_WINDOW.append(probe_ok)
+
+    duration_ms = int((asyncio.get_event_loop().time() - started) * 1000)
+    recent = list(_DEEP_HEALTH_WINDOW)
+    failure_rate = (recent.count(False) / len(recent)) if recent else 0.0
+    status_healthy = failure_rate <= _DEEP_HEALTH_FAILURE_THRESHOLD
+
+    payload = {
+        "status": "healthy" if status_healthy else "unhealthy",
+        "probe_ok": probe_ok,
+        "rolling_window_size": len(recent),
+        "rolling_failure_rate": round(failure_rate, 3),
+        "threshold": _DEEP_HEALTH_FAILURE_THRESHOLD,
+        "duration_ms": duration_ms,
+        "detail": detail,
+    }
+    http_status = 200 if status_healthy else 503
+    return JSONResponse(status_code=http_status, content=payload)
 
 
 @app.get("/version")
