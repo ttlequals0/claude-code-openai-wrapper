@@ -5,6 +5,36 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.2] - 2026-04-23
+
+Dependency bump to clear trivy HIGH/CRITICAL findings against 2.8.1.
+No code change.
+
+### Security
+
+Locked versions after `poetry lock` with the new constraints:
+
+| Package | Before | After | CVEs cleared |
+|---|---|---|---|
+| fastapi | 0.115.14 | 0.128.1 | (bumped to allow starlette >=0.49) |
+| starlette | 0.46.2 | 0.50.0 | CVE-2025-62727 (HIGH, DoS via Range header) |
+| urllib3 | 2.5.0 | 2.6.3 | CVE-2025-66418, CVE-2025-66471, CVE-2026-21441 (HIGH) |
+| python-multipart | 0.0.18 | 0.0.22 | CVE-2026-24486 (HIGH, path traversal) |
+| cryptography | 46.0.3 | 46.0.7 | CVE-2026-26007 (HIGH) |
+| pyjwt | 2.10.1 | 2.12.1 | CVE-2026-32597 (HIGH) |
+| authlib | 1.6.6 | 1.7.0 | CVE-2026-27962 (CRITICAL), CVE-2026-28802, CVE-2026-28490, CVE-2026-28498 (HIGH) |
+| mcp | 1.20.0 | 1.27.0 | CVE-2025-66416 (HIGH) |
+| nltk | 3.9.2 | 3.9.4 | CVE-2025-14009 (CRITICAL), CVE-2026-0846 (HIGH) |
+
+### Remaining (no fix available upstream)
+
+- nltk CVE-2026-33231, CVE-2026-33236 (XML path traversal) — no patched version published; track upstream
+- Debian base-image packages: libncursesw6, libnghttp2-14, libsystemd0, libtinfo6, libudev1, ncurses-base, ncurses-bin — no fix in current debian:13 stream; addressed when base image is rebased
+
+### Changed
+
+- `pyproject.toml`: explicit security-floor pins added for `starlette`, `urllib3`, `cryptography`, `pyjwt`, `authlib`, `mcp`, `nltk`. Each is a transitive of fastapi/claude-agent-sdk/bundled CLI but needs a minimum version higher than the parent's ceiling allowed, so we list them directly. `fastapi` widened to `>=0.119,<1.0` to allow starlette 0.49.x+.
+
 ## [2.8.1] - 2026-04-23
 
 Hotfix on top of 2.8.0 after observing breaker cascade during live
