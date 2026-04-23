@@ -30,12 +30,13 @@ COPY . /app
 # Build-info stamp: record the installed SDK and bundled Claude CLI versions
 # so the running container advertises what it actually ships. This turns
 # "which SDK shipped in the image?" from guesswork into a one-shot `cat`.
-RUN python3 -c "\
-import importlib.metadata, pathlib;\
+# Must run via `poetry run` because dependencies are installed into the
+# Poetry-managed virtualenv, not the system site-packages.
+RUN poetry run python -c "\
+import importlib.metadata, pathlib, claude_agent_sdk;\
 sdk = importlib.metadata.version('claude-agent-sdk');\
-cli = pathlib.Path('/usr/local/lib/python3.12/site-packages/claude_agent_sdk/_bundled/claude');\
-cli_exists = cli.exists();\
-open('/app/BUILD_INFO', 'w').write(f'claude-agent-sdk={sdk}\\nbundled_cli_present={cli_exists}\\n')\
+cli = pathlib.Path(claude_agent_sdk.__file__).parent / '_bundled' / 'claude';\
+open('/app/BUILD_INFO', 'w').write(f'claude-agent-sdk={sdk}\\nbundled_cli_present={cli.exists()}\\nbundled_cli_path={cli}\\n')\
 " || echo "BUILD_INFO stamp skipped (non-fatal)"
 
 EXPOSE 8000
