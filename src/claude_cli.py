@@ -13,6 +13,75 @@ from src.retry import RetryState, retry_delay
 logger = logging.getLogger(__name__)
 
 
+# ResultMessage subtypes that mean the SDK failed to produce a valid response.
+# The SDK inserts a synthetic UserMessage(text='[Request interrupted by user]')
+# before emitting a ResultMessage with one of these subtypes; without explicit
+# handling, the sentinel leaks into the OpenAI response body.
+_ERROR_RESULT_SUBTYPES = frozenset({
+    "error_max_turns",
+    "error_during_execution",
+    "error",
+})
+
+# AssistantMessage.error literal values that the SDK attaches when the
+# upstream API fails mid-response. Source: claude_agent_sdk.types
+# AssistantMessageError = Literal["authentication_failed", "billing_error",
+# "rate_limit", "invalid_request", "server_error", "unknown"].
+_ASSISTANT_ERROR_VALUES = frozenset({
+    "authentication_failed",
+    "billing_error",
+    "rate_limit",
+    "invalid_request",
+    "server_error",
+    "unknown",
+})
+
+
+def _extract_text_blocks(content: List[Any]) -> List[str]:
+    """Flatten a list of SDK content blocks into plain text strings.
+
+    Accepts TextBlock objects (with a ``.text`` attribute), dict blocks of the
+    form ``{"type": "text", "text": ...}``, and bare strings. Ignores other
+    block types (e.g. ``ToolUseBlock``).
+    """
+    text_parts: List[str] = []
+    for block in content:
+        if hasattr(block, "text"):
+            text_parts.append(block.text)
+        elif isinstance(block, dict) and block.get("type") == "text":
+            text_parts.append(block.get("text", ""))
+        elif isinstance(block, str):
+            text_parts.append(block)
+    return text_parts
+
+
+class ClaudeResultError(Exception):
+    """Raised when the Claude Agent SDK emits a non-success ResultMessage.
+
+    Callers in the HTTP layer translate this into a proper OpenAI-compatible
+    response: error_max_turns -> 200 with finish_reason='length' and empty
+    content; other subtypes -> 5xx with a structured error body.
+    """
+
+    def __init__(
+        self,
+        subtype: Optional[str],
+        num_turns: Optional[int] = None,
+        errors: Optional[List[str]] = None,
+        stop_reason: Optional[str] = None,
+        error_message: Optional[str] = None,
+    ):
+        self.subtype = subtype
+        self.num_turns = num_turns
+        self.errors = errors or []
+        self.stop_reason = stop_reason
+        self.error_message = error_message
+        detail = error_message or (self.errors[0] if self.errors else subtype)
+        super().__init__(
+            f"Claude SDK returned {subtype} after {num_turns} turns: {detail}"
+        )
+
+
 class ClaudeCodeCLI:
     def __init__(self, timeout: int = 600000, cwd: Optional[str] = None):
         self.timeout = timeout / 1000  # Convert ms to seconds
@@ -217,11 +286,16 @@ class ClaudeCodeCLI:
 
         except Exception as e:
             logger.error(f"Claude Agent SDK error: {e}")
+            # Emit a dict that matches the shape parse_claude_message expects
+            # for a ResultMessage, so the HTTP layer surfaces the failure via
+            # ClaudeResultError rather than silently returning empty content.
             yield {
                 "type": "result",
                 "subtype": "error_during_execution",
                 "is_error": True,
                 "error_message": str(e),
+                "num_turns": 0,
+                "duration_ms": 0,
             }
 
     def parse_claude_message(self, messages: List[Dict[str, Any]]) -> Optional[str]:
@@ -229,47 +303,125 @@ class ClaudeCodeCLI:
 
         Prioritizes ResultMessage.result for multi-turn conversations,
         falls back to last AssistantMessage content.
+
+        Raises:
+            ClaudeResultError: if any ResultMessage indicates an error (e.g.
+                error_max_turns, error_during_execution) or has is_error=True.
+                The SDK inserts a synthetic UserMessage with text
+                '[Request interrupted by user]' immediately before such a
+                ResultMessage; without this check the sentinel leaks as
+                response content. Callers translate this into a proper
+                HTTP response.
         """
-        # First, check for ResultMessage with 'result' field (multi-turn completion)
+        # Reject errored ResultMessages outright. The SDK puts a synthetic
+        # UserMessage('[Request interrupted by user]') just before these, and
+        # we must not let that text escape as response content.
+        for message in messages:
+            subtype = message.get("subtype")
+            is_error = message.get("is_error") is True
+            if subtype in _ERROR_RESULT_SUBTYPES or is_error:
+                raise ClaudeResultError(
+                    subtype=subtype,
+                    num_turns=message.get("num_turns"),
+                    errors=message.get("errors"),
+                    stop_reason=message.get("stop_reason"),
+                    error_message=message.get("error_message"),
+                )
+
+        # AssistantMessage.error carries upstream-API failure details (rate
+        # limit, billing, auth). Surface those as ClaudeResultError too so the
+        # HTTP layer can map each literal to the right status code (429, 402,
+        # 401, 400, 502) rather than returning partial content with finish_reason=stop.
+        for message in messages:
+            assistant_error = message.get("error")
+            if (
+                isinstance(assistant_error, str)
+                and assistant_error in _ASSISTANT_ERROR_VALUES
+            ):
+                raise ClaudeResultError(
+                    subtype=f"assistant_{assistant_error}",
+                    num_turns=None,
+                    errors=[assistant_error],
+                    stop_reason=message.get("stop_reason"),
+                    error_message=None,
+                )
+
+        # RateLimitInfo messages (SDK 0.1.49+): emitted by the CLI when the
+        # rate-limit state changes. If status is 'rejected', the upstream has
+        # cut us off and callers should back off rather than consume the
+        # partial response.
+        for message in messages:
+            if (
+                isinstance(message, dict)
+                and message.get("status") == "rejected"
+                and "resets_at" in message
+                and "rate_limit_type" in message
+            ):
+                resets_at = message.get("resets_at")
+                raise ClaudeResultError(
+                    subtype="assistant_rate_limit",
+                    num_turns=None,
+                    errors=["rate_limit"],
+                    stop_reason=None,
+                    error_message=f"upstream rate_limit ({message.get('rate_limit_type')}); resets_at={resets_at}",
+                )
+
+        # Prefer ResultMessage.result (multi-turn completion).
         for message in messages:
             if message.get("subtype") == "success" and "result" in message:
                 return message["result"]
 
-        # Collect all text from AssistantMessages (take the last one with text)
+        # Fall back to AssistantMessage content. Skip SDK UserMessage dicts
+        # (the wrapper's dict conversion produces a UserMessage with a uuid
+        # field and no model field; the AssistantMessage has model).
         last_text = None
         for message in messages:
-            # Look for AssistantMessage type (new SDK format)
-            if "content" in message and isinstance(message["content"], list):
-                text_parts = []
-                for block in message["content"]:
-                    # Handle TextBlock objects
-                    if hasattr(block, "text"):
-                        text_parts.append(block.text)
-                    elif isinstance(block, dict) and block.get("type") == "text":
-                        text_parts.append(block.get("text", ""))
-                    elif isinstance(block, str):
-                        text_parts.append(block)
+            if not isinstance(message, dict):
+                continue
 
+            # Skip UserMessage shapes so the synthetic interrupt sentinel
+            # cannot leak through as response text.
+            if (
+                isinstance(message.get("content"), list)
+                and "uuid" in message
+                and "model" not in message
+            ):
+                continue
+
+            # Primary path: any message with a content list is treated as an
+            # AssistantMessage (same as the pre-fix behavior) once UserMessage
+            # is excluded above.
+            if isinstance(message.get("content"), list):
+                text_parts = _extract_text_blocks(message["content"])
                 if text_parts:
                     last_text = "\n".join(text_parts)
+                continue
 
-            # Fallback: look for old format
-            elif message.get("type") == "assistant" and "message" in message:
+            # Legacy fallback: { type: "assistant", message: { content: ... } }
+            if message.get("type") == "assistant" and "message" in message:
                 sdk_message = message["message"]
                 if isinstance(sdk_message, dict) and "content" in sdk_message:
                     content = sdk_message["content"]
                     if isinstance(content, list) and len(content) > 0:
-                        # Handle content blocks (Anthropic SDK format)
-                        text_parts = []
-                        for block in content:
-                            if isinstance(block, dict) and block.get("type") == "text":
-                                text_parts.append(block.get("text", ""))
+                        text_parts = _extract_text_blocks(content)
                         if text_parts:
                             last_text = "\n".join(text_parts)
                     elif isinstance(content, str):
                         last_text = content
 
         return last_text
+
+    @staticmethod
+    def _extract_text_blocks(content: List[Any]) -> List[str]:
+        text_parts = []
+        for block in content:
+            if hasattr(block, "text"):
+                text_parts.append(block.text)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                text_parts.append(block.get("text", ""))
+            elif isinstance(block, str):
+                text_parts.append(block)
+        return text_parts
 
     def extract_metadata(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Extract metadata like costs, tokens, and session info from SDK messages."""

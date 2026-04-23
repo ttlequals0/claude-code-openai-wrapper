@@ -245,23 +245,63 @@ class TestChatCompletionRequest:
         options = request.to_claude_options()
         assert options["model"] == "claude-sonnet-4-5-20250929"
 
-    def test_to_claude_options_with_max_tokens(self):
-        """to_claude_options() maps max_tokens to max_thinking_tokens."""
-        request = ChatCompletionRequest(
-            messages=[Message(role="user", content="Hi")], max_tokens=500
-        )
-        options = request.to_claude_options()
-        assert options.get("max_thinking_tokens") == 500
+    def test_to_claude_options_ignores_max_tokens_by_default(self):
+        """max_tokens is ignored when WRAPPER_MAP_MAX_TOKENS_TO_THINKING is unset.
+
+        OpenAI max_tokens is an output-length cap; the Claude Agent SDK has no
+        equivalent, and mapping it to max_thinking_tokens caused short prompts
+        to bust max_turns after burning the thinking budget.
+        """
+        import os
+
+        prior = os.environ.pop("WRAPPER_MAP_MAX_TOKENS_TO_THINKING", None)
+        try:
+            request = ChatCompletionRequest(
+                messages=[Message(role="user", content="Hi")], max_tokens=500
+            )
+            options = request.to_claude_options()
+            assert "max_thinking_tokens" not in options
+        finally:
+            if prior is not None:
+                os.environ["WRAPPER_MAP_MAX_TOKENS_TO_THINKING"] = prior
+
+    def test_to_claude_options_maps_when_env_enables_legacy(self):
+        """Opt-in via env var restores the legacy max_thinking_tokens mapping."""
+        import os
+
+        prior = os.environ.get("WRAPPER_MAP_MAX_TOKENS_TO_THINKING")
+        os.environ["WRAPPER_MAP_MAX_TOKENS_TO_THINKING"] = "true"
+        try:
+            request = ChatCompletionRequest(
+                messages=[Message(role="user", content="Hi")], max_tokens=500
+            )
+            options = request.to_claude_options()
+            assert options.get("max_thinking_tokens") == 500
+        finally:
+            if prior is None:
+                os.environ.pop("WRAPPER_MAP_MAX_TOKENS_TO_THINKING", None)
+            else:
+                os.environ["WRAPPER_MAP_MAX_TOKENS_TO_THINKING"] = prior
 
     def test_to_claude_options_prefers_max_completion_tokens(self):
-        """max_completion_tokens takes precedence over max_tokens."""
-        request = ChatCompletionRequest(
-            messages=[Message(role="user", content="Hi")],
-            max_tokens=500,
-            max_completion_tokens=1000,
-        )
-        options = request.to_claude_options()
-        assert options.get("max_thinking_tokens") == 1000
+        """max_completion_tokens takes precedence over max_tokens when mapping."""
+        import os
+
+        prior = os.environ.get("WRAPPER_MAP_MAX_TOKENS_TO_THINKING")
+        os.environ["WRAPPER_MAP_MAX_TOKENS_TO_THINKING"] = "true"
+        try:
+            request = ChatCompletionRequest(
+                messages=[Message(role="user", content="Hi")],
+                max_tokens=500,
+                max_completion_tokens=1000,
+            )
+            options = request.to_claude_options()
+            assert options.get("max_thinking_tokens") == 1000
+        finally:
+            if prior is None:
+                os.environ.pop("WRAPPER_MAP_MAX_TOKENS_TO_THINKING", None)
+            else:
+                os.environ["WRAPPER_MAP_MAX_TOKENS_TO_THINKING"] = prior
 
 
 class TestChatCompletionResponse:

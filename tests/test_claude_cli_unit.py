@@ -141,6 +141,90 @@ class TestClaudeCodeCLIParseMessage:
         result = cli.parse_claude_message(messages)
         assert result == "Final result"
 
+    def test_error_max_turns_raises_instead_of_returning_sentinel(self, cli_class):
+        """When the SDK reports error_max_turns, parse_claude_message raises
+        ClaudeResultError. Previously the loop fell through to the synthetic
+        UserMessage('[Request interrupted by user]') and returned its text
+        verbatim as the response body, which shipped as the OpenAI response
+        content and made its way into downstream artifacts (e.g. chapter
+        titles). This test pins the fix.
+        """
+        from src.claude_cli import ClaudeResultError
+
+        cli = MagicMock()
+        cli.parse_claude_message = cli_class.parse_claude_message.__get__(cli, cli_class)
+
+        # Shape matches what the SDK emits on error_max_turns: a synthetic
+        # UserMessage with the interrupt sentinel, then a ResultMessage with
+        # subtype='error_max_turns', result=None.
+        messages = [
+            {
+                "content": [{"type": "text", "text": "[Request interrupted by user]"}],
+                "uuid": "u-sentinel",
+                "parent_tool_use_id": None,
+            },
+            {
+                "subtype": "error_max_turns",
+                "is_error": False,
+                "num_turns": 2,
+                "duration_ms": 2159,
+                "duration_api_ms": 0,
+                "result": None,
+                "session_id": "sess-err",
+            },
+        ]
+        with pytest.raises(ClaudeResultError) as excinfo:
+            cli.parse_claude_message(messages)
+        assert excinfo.value.subtype == "error_max_turns"
+        assert excinfo.value.num_turns == 2
+
+    def test_user_message_content_never_leaks_as_response(self, cli_class):
+        """A SDK UserMessage (identified by uuid + no model field) must never
+        be returned as assistant content, even when it precedes a successful
+        result. Guards against the same leak as the error_max_turns case."""
+        cli = MagicMock()
+        cli.parse_claude_message = cli_class.parse_claude_message.__get__(cli, cli_class)
+
+        messages = [
+            {
+                "content": [{"type": "text", "text": "[Request interrupted by user]"}],
+                "uuid": "u-sentinel",
+                "parent_tool_use_id": None,
+            },
+            # AssistantMessage shape: has model, no uuid-only marker.
+            {
+                "content": [{"type": "text", "text": "Real answer"}],
+                "model": "claude-sonnet-4-6",
+                "parent_tool_use_id": None,
+            },
+        ]
+        result = cli.parse_claude_message(messages)
+        assert result == "Real answer"
+        assert "Request interrupted" not in (result or "")
+
+    def test_is_error_true_raises_even_when_subtype_missing(self, cli_class):
+        """If a ResultMessage has is_error=True without a matching subtype
+        literal, we still raise. This covers future SDK changes that add new
+        error subtypes we haven't enumerated."""
+        from src.claude_cli import ClaudeResultError
+
+        cli = MagicMock()
+        cli.parse_claude_message = cli_class.parse_claude_message.__get__(cli, cli_class)
+
+        messages = [
+            {
+                "subtype": "something_new",
+                "is_error": True,
+                "num_turns": 1,
+                "duration_ms": 100,
+                "result": None,
+                "errors": ["rate_limited_by_upstream"],
+            },
+        ]
+        with pytest.raises(ClaudeResultError) as excinfo:
+            cli.parse_claude_message(messages)
+        assert "rate_limited_by_upstream" in excinfo.value.errors
+
 
 class TestClaudeCodeCLIExtractMetadata:
     """Test ClaudeCodeCLI.extract_metadata()"""

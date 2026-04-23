@@ -5,6 +5,36 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0] - 2026-04-23
+
+### Fixed
+
+- **SDK `error_max_turns` no longer leaks `[Request interrupted by user]` as response content** (`src/claude_cli.py`): `parse_claude_message` now raises `ClaudeResultError` when any `ResultMessage` has `is_error=True` or a subtype in `{error_max_turns, error_during_execution, error}`. The SDK inserts a synthetic `UserMessage(text='[Request interrupted by user]')` right before those results; previously the fallback loop returned that text as the assistant response, which shipped as valid content to OpenAI clients and propagated into downstream artifacts (e.g. MinusPod chapter titles). `UserMessage` is now explicitly filtered out of response-text collection (identifiable by `uuid` field with no `model` field).
+- **`max_turns=1` when `enable_tools=False` raised to `3`** (`src/main.py:_build_claude_options`): the hardcoded `max_turns=1` caused `error_max_turns` on any prompt where the agent engaged extended thinking and then needed a second turn to emit the final assistant message. New default is configurable via `WRAPPER_DEFAULT_MAX_TURNS`.
+- **`max_tokens -> max_thinking_tokens` mapping is off by default** (`src/models.py`): OpenAI `max_tokens` is a response-length cap; the Claude Agent SDK has no direct equivalent. Mapping it to `max_thinking_tokens` caused short prompts (e.g. `max_tokens=500` for a title) to burn the thinking budget before emitting output, occasionally busting `max_turns`. Opt in to the legacy mapping via `WRAPPER_MAP_MAX_TOKENS_TO_THINKING=true`.
+- **Non-success `ResultMessage` now produces a proper OpenAI-shaped HTTP response** (`src/main.py`): `error_max_turns` -> `200` with `finish_reason="length"` and empty `content`; other SDK errors -> `502` with a structured error body; streaming path emits a terminal SSE event with the matching `finish_reason` and `[DONE]`.
+
+### Added
+
+- **`ClaudeResultError` exception** (`src/claude_cli.py`): typed error surface for SDK failures. Carries `subtype`, `num_turns`, `errors`, `stop_reason`, and `error_message`.
+- **Structured AssistantMessage error taxonomy** (`src/main.py`): `AssistantMessage.error` literals map to HTTP status codes -- `rate_limit` -> 429 with `Retry-After: 30`, `billing_error` -> 402, `authentication_failed` -> 401, `invalid_request` -> 400, `server_error`/`unknown` -> 502. Parser also detects `RateLimitInfo` messages (SDK 0.1.49+, future-compatible).
+- **Circuit breaker on SDK errors** (`src/circuit_breaker.py`): in-process rolling-window breaker. Default: opens when >=50% of the last 60s are failures and >=10 requests, 30s cool-off, half-opens with a single probe. Completion handler returns `503 Retry-After: 30` with a structured body when the breaker is open.
+- **`/healthz/deep` endpoint** (`src/main.py`): end-to-end probe that actually exercises the completion path. Tracks a rolling window of 10 outcomes and returns `503` when the failure rate exceeds 20%. Unlike `/health` (process liveness only), this catches upstream-SDK incidents that leave the wrapper process up while returning garbage.
+- **Structured `completion_result` log line** (`src/main.py`): one INFO-level record per successful completion with `request_id`, `session_id`, `subtype`, `num_turns`, `duration_ms`, `total_cost_usd`, `is_error`, `finish_reason`, `model`, and token counts. Simplifies Grafana triage.
+- **`BUILD_INFO` image stamp** (`Dockerfile`): records the installed `claude-agent-sdk` version and bundled-CLI presence at build time. Logged at startup via `_log_build_info()`.
+- **Multi-stage Dockerfile with `dev` and `prod` targets**: `dev` keeps `--reload` for local iteration; `prod` runs with `--workers 2 --no-access-log` (override via `UVICORN_WORKERS`). `docker-compose.yml` defaults to the `prod` target.
+- **Regression tests** covering the sentinel leak and the error taxonomy: `tests/test_claude_cli_unit.py` (`test_error_max_turns_raises_instead_of_returning_sentinel`, `test_user_message_content_never_leaks_as_response`, `test_is_error_true_raises_even_when_subtype_missing`, `test_assistant_rate_limit_raises`), `tests/test_error_path_unit.py` (HTTP-shape translations for each error class), `tests/test_circuit_breaker_unit.py` (state machine).
+
+### Changed
+
+- **SDK pinned exactly** (`pyproject.toml`): `claude-agent-sdk = "0.1.18"` (was `^0.1.18`). The caret range resolved to whatever 0.1.x was latest at install time, which let semantics drift between Docker builds without a code change (SDK 0.1.57 changed how thinking config is serialized to the CLI). Bump this pin deliberately and regenerate `poetry.lock` in the same commit. Upstream latest at time of pin: `0.1.65`.
+- **`docker-compose.yml`**: adds `build.target: prod`, documents new env vars (`UVICORN_WORKERS`, `WRAPPER_DEFAULT_MAX_TURNS`, `WRAPPER_MAP_MAX_TOKENS_TO_THINKING`).
+
+### Notes
+
+- `claude-agent-sdk` stays pinned to `0.1.18` because that's the version the production image has been running. Bump to `0.1.65` in a separate commit after validating behavior changes across `0.1.18..0.1.65` (particularly `0.1.57` thinking handling and `0.1.49` `RateLimitInfo` surfacing).
+- Upstream consumer affected by the `error_max_turns` leak was MinusPod; see that project's `2.0.12` release notes for the consumer-side defensive changes landing in parallel.
+
 ## [2.7.0] - 2026-04-16
 
 ### Added
