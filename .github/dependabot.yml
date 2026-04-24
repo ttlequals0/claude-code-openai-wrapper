@@ -1,0 +1,49 @@
+version: 2
+updates:
+  # Python dependencies via Poetry. claude-agent-sdk ships on a fast
+  # cadence (47 patch releases between 0.1.18 and 0.1.65 in the window
+  # covered by CHANGELOG 2.9.0); weekly checks keep the drift bounded
+  # without drowning review in daily PRs.
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - python
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+    groups:
+      # Group minor/patch bumps so the review queue stays short.
+      python-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    # claude-agent-sdk stays exact-pinned on purpose (see pyproject.toml).
+    # Do not let Dependabot widen the constraint - it must only propose
+    # a new exact pin.
+    ignore: []
+
+  # GitHub Actions versions (actions/checkout, codecov/codecov-action,
+  # snok/install-poetry, etc). Weekly keeps supply-chain drift bounded.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: "chore(ci)"
+      include: scope
