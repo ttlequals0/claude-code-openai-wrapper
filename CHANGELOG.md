@@ -21,8 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `python:3.12-slim` rebases.
 - `.github/workflows/ci.yml`: added `timeout-minutes: 15`,
   `fail-fast: false`, `poetry check --lock` to catch lockfile drift,
-  replaced deprecated `safety check` with `pip-audit`, and added a
-  `docker` job that smoke-builds the prod image on every PR.
+  and replaced deprecated `safety check` with `pip-audit`. No Docker
+  smoke-build step - images are built and pushed locally, CI only
+  gates Python-side checks.
 - `.github/workflows/claude.yml`: repo-specific `claude_args` with a
   read-only tool allowlist (no write commands, no PR mutations).
 - Ran `black` across `src/` and `tests/` so the linting gate in CI
