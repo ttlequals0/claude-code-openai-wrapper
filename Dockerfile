@@ -22,7 +22,10 @@ WORKDIR /app
 
 # Copy manifests first so dependency install is cached when source changes.
 COPY pyproject.toml poetry.lock* /app/
-RUN poetry install --no-root --no-interaction --no-ansi
+# --only main excludes the dev group (black, bandit, pytest, mypy, etc.),
+# which are only needed in CI and would otherwise ship inside the image and
+# expand the vulnerability surface (e.g. CVE-2026-32274 black < 26.3.1).
+RUN poetry install --no-root --only main --no-interaction --no-ansi
 
 # Copy the application source.
 COPY . /app

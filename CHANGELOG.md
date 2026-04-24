@@ -56,6 +56,34 @@ Closes the ten CodeQL code-scanning alerts open on `main`.
 - `/v1/debug/request` returns `{"debug_info": {"enabled": false, ...}}`
   unless `DEBUG_MODE=true` or `VERBOSE=true` is set on the server.
 
+### Docker image
+
+- `Dockerfile`: `poetry install --no-root` is now scoped to `--only main`.
+  Dev-group packages (black, bandit, pytest, mypy, safety, etc.) no
+  longer ship inside the runtime image. This removes the one Trivy
+  HIGH with an available fix (CVE-2026-32274, `black < 26.3.1`) and
+  drops the image from 1.18 GB to 775 MB.
+- Added `.dockerignore` so `COPY . /app` stops pulling `.git`, `.venv`,
+  `.hypothesis`, `.pytest_cache`, `tests`, `docs`, `.env*`, and editor
+  cruft into the image. BUILD_INFO now stamps cleanly at build time.
+- Remaining Trivy HIGHs (7) are in the Debian 13.4 base - ncurses
+  (CVE-2025-69720), nghttp2 (CVE-2026-27135), and systemd
+  (CVE-2026-29111). All have `fix: null` upstream at the time of this
+  release; they will clear when `python:3.12-slim` rebases. Accepted
+  risk.
+
+### Workflows
+
+- `.github/workflows/ci.yml`: added `timeout-minutes: 15`,
+  `fail-fast: false`, `poetry check --lock` (catches the lockfile
+  drift that burned us on the 0.1.65 SDK bump), replaced deprecated
+  `safety check` with `pip-audit`, and added a `docker` job that
+  smoke-builds the prod image on every PR.
+- `.github/workflows/claude.yml`: repo-specific `claude_args` with a
+  read-only tool allowlist (no write commands, no PR mutations) and
+  inline documentation of why the `contains()` gate on user-controlled
+  event fields is safe.
+
 ## [2.9.0] - 2026-04-23
 
 ### Changed

@@ -6,14 +6,24 @@ on:
   pull_request:
     branches: [main]
 
+# Minimum GITHUB_TOKEN scope the jobs need. The Codecov upload reads a
+# separate CODECOV_TOKEN from repo secrets; it does not need a broader
+# GITHUB_TOKEN scope.
 permissions:
   contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Hard ceiling so a hung pytest or stalled Poetry install can't chew
+    # through minutes silently.
+    timeout-minutes: 15
     strategy:
+      # Don't cancel the rest of the matrix when one Python fails - we want
+      # to see whether a regression is specific to a single interpreter.
+      fail-fast: false
       matrix:
+        # pyproject.toml pins python = "^3.10"; test every supported minor.
         python-version: ["3.10", "3.11", "3.12"]
 
     steps:
@@ -37,6 +47,13 @@ jobs:
           path: .venv
           key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
 
+      # Catch lockfile drift early. The project depends on an exact pin of
+      # claude-agent-sdk (see CHANGELOG 2.9.0) so pyproject <-> poetry.lock
+      # disagreement must fail CI rather than silently resolve at install
+      # time.
+      - name: Verify lockfile is in sync
+        run: poetry check --lock
+
       - name: Install dependencies
         if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
         run: poetry install --no-interaction --no-root
@@ -51,11 +68,17 @@ jobs:
         run: poetry run mypy src --ignore-missing-imports
         continue-on-error: true
 
-      - name: Security scan
+      - name: Static security scan (bandit)
         run: poetry run bandit -r src/ -ll -x tests
 
-      - name: Dependency vulnerability scan
-        run: poetry run safety check || true
+      - name: Dependency vulnerability scan (pip-audit)
+        # pip-audit replaces the deprecated `safety check` command. It
+        # reads the installed venv so it matches exactly what will ship.
+        # Non-blocking: Dependabot / Trivy on the built image are the
+        # authoritative gates; this is a fast PR signal.
+        run: |
+          poetry run pip install --quiet pip-audit
+          poetry run pip-audit --strict --progress-spinner off || true
         continue-on-error: true
 
       - name: Run tests
@@ -67,3 +90,27 @@ jobs:
         with:
           files: ./coverage.xml
           fail_ci_if_error: false
+
+  docker:
+    # Smoke-build the production image on every PR so a Dockerfile
+    # regression is caught before a release build. No push, no deploy.
+    name: Docker build smoke test
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          target: prod
+          tags: claude-code-openai-wrapper:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

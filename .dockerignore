@@ -1,0 +1,53 @@
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Python build / runtime caches
+__pycache__
+*.py[cod]
+*$py.class
+*.egg-info
+.pytest_cache
+.hypothesis
+.mypy_cache
+.ruff_cache
+.coverage
+coverage.xml
+htmlcov
+
+# Local virtualenvs (Dockerfile creates its own via Poetry)
+.venv
+venv
+env
+
+# Local-only config and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+id_rsa*
+credentials*
+secrets*
+
+# Tests / docs / examples are not needed at runtime
+tests
+docs
+examples
+
+# Editor / OS cruft
+.DS_Store
+.idea
+.vscode
+*.swp
+*~
+
+# CI / local tooling state
+.github
+.claude
+
+# Planning / local notes
+plans
+*.tmp
