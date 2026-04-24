@@ -171,7 +171,9 @@ def test_session_endpoints():
         if sessions["total"] >= len(session_ids):
             print(f"   ✅ Found all test sessions")
         else:
-            print(f"   ⚠️  Expected at least {len(session_ids)} sessions, found {sessions['total']}")
+            print(
+                f"   ⚠️  Expected at least {len(session_ids)} sessions, found {sessions['total']}"
+            )
 
     # Test get specific session
     get_response = requests.get(f"{BASE_URL}/v1/sessions/{session_ids[0]}")
