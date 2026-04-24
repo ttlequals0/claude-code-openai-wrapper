@@ -5,6 +5,129 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.3] - 2026-04-24
+
+### Fixed
+
+- **Runtime `ModuleNotFoundError: No module named 'opentelemetry'` at
+  first SDK connect**. `claude-agent-sdk 0.1.65` imports
+  `opentelemetry.propagate` unconditionally at
+  `_internal/transport/subprocess_cli.py:413`, but PyPI declares
+  `opentelemetry-api` only as an optional `[otel]` extra. The 2.9.2
+  Docker image (rebuilt with `poetry install --only main`) therefore
+  shipped without OTel, and the first chat completion after a fresh
+  deploy raised during `connect()`. Fix: pin
+  `claude-agent-sdk = {version = "0.1.65", extras = ["otel"]}` in
+  `pyproject.toml` so the dependency resolves into the main group.
+  `poetry lock` regenerated; `opentelemetry-api 1.41.1` now ships in
+  the image.
+
+## [2.9.2] - 2026-04-24
+
+### Build / CI
+
+- `Dockerfile`: `poetry install --only main` now excludes dev packages
+  from the runtime image. Removes the one Trivy HIGH with an upstream
+  fix (CVE-2026-32274, black < 26.3.1) and drops image size from
+  1.18 GB to 775 MB. BUILD_INFO stamps cleanly.
+- Added `.dockerignore` so `COPY . /app` stops pulling `.git`, `.venv`,
+  `.hypothesis`, `.pytest_cache`, `tests`, `docs`, `.env*`, and editor
+  cruft.
+- Remaining Trivy HIGHs (7) are in the Debian 13.4 base (ncurses,
+  nghttp2, systemd); all `fix: null` upstream. Accepted risk until
+  `python:3.12-slim` rebases.
+- `.github/workflows/ci.yml`: added `timeout-minutes: 15`,
+  `fail-fast: false`, `poetry check --lock` to catch lockfile drift,
+  and replaced deprecated `safety check` with `pip-audit`. No Docker
+  smoke-build step - images are built and pushed locally, CI only
+  gates Python-side checks.
+- `.github/workflows/claude.yml`: repo-specific `claude_args` with a
+  read-only tool allowlist (no write commands, no PR mutations).
+- Ran `black` across `src/` and `tests/` so the linting gate in CI
+  actually passes; 18 files reformatted with no behavioural change.
+- Disabled the `Claude Code Review` workflow upstream; the file was
+  removed from the repo in 2.9.1 but `pull_request_target` kept
+  executing it from `main` until explicit disable.
+
+## [2.9.1] - 2026-04-24
+
+### Security
+
+Closes the ten CodeQL code-scanning alerts open on `main`.
+
+- **Workflow: `claude-code-review.yml` removed** (alert #1,
+  `actions/untrusted-checkout/high`). The file checked out
+  `pull_request.head.sha` inside a `pull_request_target` job, exposing
+  repo secrets to untrusted code. Deleted entirely; automated PR review
+  can be reintroduced later behind a non-privileged trigger.
+- **Workflow: `ci.yml` permissions pinned** (alert #2,
+  `actions/missing-workflow-permissions`). Added top-level
+  `permissions: {contents: read}`.
+- **Error responses no longer leak exception detail** (alerts #7-#10,
+  `py/stack-trace-exposure`). `str(e)` has been replaced with static,
+  client-safe strings in:
+  - `_build_assistant_error_response` (new `_safe_assistant_error_message`
+    helper keyed on the upstream subtype);
+  - the `generate_streaming_response` SSE error chunk;
+  - the chat-completions and Anthropic-messages 500 HTTPException
+    handlers;
+  - `/v1/debug/request`, which is now entirely gated behind
+    `DEBUG_MODE`/`VERBOSE` and emits only the exception *type name* when
+    enabled. All server-side logging of the full exception is preserved.
+- **`MessageAdapter.filter_content` regexes hardened against
+  polynomial ReDoS** (alerts #3-#6, `py/polynomial-redos`). The lazy
+  `<tag>.*?</tag>` patterns were rewritten to the non-backtracking
+  `<tag>[^<]*(?:<(?!/tag>)[^<]*)*</tag>` form and pre-compiled at module
+  scope. The image-reference pattern now uses fixed upper bounds
+  (`[^\]]{0,1024}` / `[^\s]{0,65536}`) instead of lazy quantifiers with
+  a lookahead. A 1 MB input length guard short-circuits
+  `filter_content` on pathological payloads.
+
+### Tests
+
+- New `tests/test_redos_safety.py`: six pathological inputs that the
+  pre-fix regexes would have spent seconds-to-minutes on each complete
+  in under 1 s. Plus behavioural regression tests asserting the
+  rewritten patterns still strip `<thinking>`, extract nested
+  `<attempt_completion>`/`<result>`, replace image tokens, and return
+  oversized input unchanged.
+
+### Notes
+
+- Client-visible error message text has changed (now generic strings
+  like "Chat completion failed"). The OpenAI-style `type` and `code`
+  fields are unchanged, so programmatic error routing is unaffected.
+- `/v1/debug/request` returns `{"debug_info": {"enabled": false, ...}}`
+  unless `DEBUG_MODE=true` or `VERBOSE=true` is set on the server.
+
+### Docker image
+
+- `Dockerfile`: `poetry install --no-root` is now scoped to `--only main`.
+  Dev-group packages (black, bandit, pytest, mypy, safety, etc.) no
+  longer ship inside the runtime image. This removes the one Trivy
+  HIGH with an available fix (CVE-2026-32274, `black < 26.3.1`) and
+  drops the image from 1.18 GB to 775 MB.
+- Added `.dockerignore` so `COPY . /app` stops pulling `.git`, `.venv`,
+  `.hypothesis`, `.pytest_cache`, `tests`, `docs`, `.env*`, and editor
+  cruft into the image. BUILD_INFO now stamps cleanly at build time.
+- Remaining Trivy HIGHs (7) are in the Debian 13.4 base - ncurses
+  (CVE-2025-69720), nghttp2 (CVE-2026-27135), and systemd
+  (CVE-2026-29111). All have `fix: null` upstream at the time of this
+  release; they will clear when `python:3.12-slim` rebases. Accepted
+  risk.
+
+### Workflows
+
+- `.github/workflows/ci.yml`: added `timeout-minutes: 15`,
+  `fail-fast: false`, `poetry check --lock` (catches the lockfile
+  drift that burned us on the 0.1.65 SDK bump), replaced deprecated
+  `safety check` with `pip-audit`, and added a `docker` job that
+  smoke-builds the prod image on every PR.
+- `.github/workflows/claude.yml`: repo-specific `claude_args` with a
+  read-only tool allowlist (no write commands, no PR mutations) and
+  inline documentation of why the `contains()` gate on user-controlled
+  event fields is safe.
+
 ## [2.9.0] - 2026-04-23
 
 ### Changed

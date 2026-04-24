@@ -147,7 +147,9 @@ class ModelService:
                     return None
 
             elif response.status_code == 401:
-                logger.warning("Anthropic API authentication failed (401). Check ANTHROPIC_API_KEY.")
+                logger.warning(
+                    "Anthropic API authentication failed (401). Check ANTHROPIC_API_KEY."
+                )
                 return None
             elif response.status_code == 429:
                 logger.warning("Anthropic API rate limited (429). Using fallback models.")

@@ -16,9 +16,15 @@ from src.constants import MODEL_PRICING, WEB_SEARCH_COST_USD, SESSION_MAX_AGE_MI
 logger = logging.getLogger(__name__)
 
 # Default pricing tier (Sonnet) for unknown models
-_DEFAULT_PRICING = MODEL_PRICING.get("claude-sonnet-4-6", {
-    "input": 3.0, "output": 15.0, "cache_read": 0.30, "cache_write": 3.75,
-})
+_DEFAULT_PRICING = MODEL_PRICING.get(
+    "claude-sonnet-4-6",
+    {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.30,
+        "cache_write": 3.75,
+    },
+)
 
 _KEY_INPUT = "input"
 _KEY_OUTPUT = "output"
@@ -29,6 +35,7 @@ _KEY_CACHE_WRITE = "cache_write"
 @dataclass
 class UsageRecord:
     """Token usage for a single request."""
+
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
@@ -39,6 +46,7 @@ class UsageRecord:
 @dataclass
 class SessionCost:
     """Accumulated cost for a session."""
+
     total_cost_usd: float = 0.0
     total_input_tokens: int = 0
     total_output_tokens: int = 0
@@ -118,7 +126,8 @@ class CostTracker:
         now = time.time()
         async with self._lock:
             expired = [
-                sid for sid, s in self._sessions.items()
+                sid
+                for sid, s in self._sessions.items()
                 if (now - s.last_updated) > self._max_age_seconds
             ]
             for sid in expired:

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "claude-code-openai-wrapper"
-version = "2.9.0"
+version = "2.9.3"
 description = "OpenAI API-compatible wrapper for Claude Code"
 authors = ["Richard Atkinson <richardatk01@gmail.com>"]
 readme = "README.md"
@@ -23,7 +23,7 @@ python-multipart = "^0.0.22"
 # same commit so Docker builds stay reproducible. 2.9.0 bump from 0.1.18 to
 # 0.1.65 to pull in 47 patch releases worth of CLI fixes aimed at the
 # silent `error_during_execution` path observed on 2.8.2.
-claude-agent-sdk = "0.1.65"
+claude-agent-sdk = {version = "0.1.65", extras = ["otel"]}
 slowapi = "^0.1.9"
 
 # Security floors for transitive dependencies. Each one pinned here is a

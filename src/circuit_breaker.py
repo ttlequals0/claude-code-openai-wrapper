@@ -77,18 +77,10 @@ class CircuitBreakerConfig:
     @classmethod
     def from_env(cls) -> "CircuitBreakerConfig":
         return cls(
-            window_seconds=_env_float(
-                "WRAPPER_CIRCUIT_BREAKER_WINDOW_SECONDS", 60.0
-            ),
-            failure_ratio_threshold=_env_float(
-                "WRAPPER_CIRCUIT_BREAKER_THRESHOLD", 0.75
-            ),
-            min_requests_for_trip=_env_int(
-                "WRAPPER_CIRCUIT_BREAKER_MIN_REQUESTS", 20
-            ),
-            open_seconds=_env_float(
-                "WRAPPER_CIRCUIT_BREAKER_OPEN_SECONDS", 30.0
-            ),
+            window_seconds=_env_float("WRAPPER_CIRCUIT_BREAKER_WINDOW_SECONDS", 60.0),
+            failure_ratio_threshold=_env_float("WRAPPER_CIRCUIT_BREAKER_THRESHOLD", 0.75),
+            min_requests_for_trip=_env_int("WRAPPER_CIRCUIT_BREAKER_MIN_REQUESTS", 20),
+            open_seconds=_env_float("WRAPPER_CIRCUIT_BREAKER_OPEN_SECONDS", 30.0),
         )
 
 
@@ -147,10 +139,7 @@ class CircuitBreaker:
         now = time.monotonic()
         with self._lock:
             if self._state == CircuitBreakerState.OPEN:
-                if (
-                    self._opened_at is not None
-                    and now - self._opened_at >= self._cfg.open_seconds
-                ):
+                if self._opened_at is not None and now - self._opened_at >= self._cfg.open_seconds:
                     # Enter half-open and let exactly one probe through.
                     self._state = CircuitBreakerState.HALF_OPEN
                     self._probe_in_flight = True

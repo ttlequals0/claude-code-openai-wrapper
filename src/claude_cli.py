@@ -17,24 +17,28 @@ logger = logging.getLogger(__name__)
 # The SDK inserts a synthetic UserMessage(text='[Request interrupted by user]')
 # before emitting a ResultMessage with one of these subtypes; without explicit
 # handling, the sentinel leaks into the OpenAI response body.
-_ERROR_RESULT_SUBTYPES = frozenset({
-    "error_max_turns",
-    "error_during_execution",
-    "error",
-})
+_ERROR_RESULT_SUBTYPES = frozenset(
+    {
+        "error_max_turns",
+        "error_during_execution",
+        "error",
+    }
+)
 
 # AssistantMessage.error literal values that the SDK attaches when the
 # upstream API fails mid-response. Source: claude_agent_sdk.types
 # AssistantMessageError = Literal["authentication_failed", "billing_error",
 # "rate_limit", "invalid_request", "server_error", "unknown"].
-_ASSISTANT_ERROR_VALUES = frozenset({
-    "authentication_failed",
-    "billing_error",
-    "rate_limit",
-    "invalid_request",
-    "server_error",
-    "unknown",
-})
+_ASSISTANT_ERROR_VALUES = frozenset(
+    {
+        "authentication_failed",
+        "billing_error",
+        "rate_limit",
+        "invalid_request",
+        "server_error",
+        "unknown",
+    }
+)
 
 
 def _extract_text_blocks(content: List[Any]) -> List[str]:
@@ -79,9 +83,7 @@ class ClaudeResultError(Exception):
         self.error_message = error_message
         self.stderr_tail = stderr_tail
         detail = error_message or (self.errors[0] if self.errors else subtype)
-        super().__init__(
-            f"Claude SDK returned {subtype} after {num_turns} turns: {detail}"
-        )
+        super().__init__(f"Claude SDK returned {subtype} after {num_turns} turns: {detail}")
 
 
 class ClaudeCodeCLI:
@@ -275,10 +277,7 @@ class ClaudeCodeCLI:
                                 # (parse_claude_message, HTTP layer) can relay it.
                                 subtype = message_dict.get("subtype")
                                 is_error = message_dict.get("is_error") is True
-                                if (
-                                    subtype in _ERROR_RESULT_SUBTYPES
-                                    or is_error
-                                ):
+                                if subtype in _ERROR_RESULT_SUBTYPES or is_error:
                                     stderr_tail = "\n".join(stderr_buffer).strip()
                                     if stderr_tail:
                                         logger.warning(
@@ -380,10 +379,7 @@ class ClaudeCodeCLI:
         # 401, 400, 502) rather than returning partial content with finish_reason=stop.
         for message in messages:
             assistant_error = message.get("error")
-            if (
-                isinstance(assistant_error, str)
-                and assistant_error in _ASSISTANT_ERROR_VALUES
-            ):
+            if isinstance(assistant_error, str) and assistant_error in _ASSISTANT_ERROR_VALUES:
                 raise ClaudeResultError(
                     subtype=f"assistant_{assistant_error}",
                     num_turns=None,

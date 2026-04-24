@@ -60,7 +60,12 @@ from src.rate_limiter import (
     rate_limit_exceeded_handler,
     rate_limit_endpoint,
 )
-from src.constants import CLAUDE_MODELS, CLAUDE_TOOLS, DEFAULT_ALLOWED_TOOLS, SESSION_CLEANUP_INTERVAL_MINUTES
+from src.constants import (
+    CLAUDE_MODELS,
+    CLAUDE_TOOLS,
+    DEFAULT_ALLOWED_TOOLS,
+    SESSION_CLEANUP_INTERVAL_MINUTES,
+)
 from src.model_service import model_service
 from src.request_cache import request_cache
 from src.cost_tracker import cost_tracker, UsageRecord
@@ -103,6 +108,7 @@ def _kv(event: str, **fields: Any) -> str:
             text = repr(text)
         parts.append(f"{key}={text}")
     return " ".join(parts)
+
 
 # Set logging level based on debug/verbose mode
 log_level = logging.DEBUG if (DEBUG_MODE or VERBOSE) else logging.INFO
@@ -539,13 +545,15 @@ def _build_error_max_turns_response(
     finish_reason='length' and empty content. Clients see a well-formed
     response and can decide whether to retry with different parameters
     rather than receiving silent garbage."""
-    logger.warning(_kv(
-        "claude_sdk_error_max_turns",
-        request_id=request_id,
-        num_turns=err.num_turns,
-        stop_reason=err.stop_reason,
-        errors=err.errors,
-    ))
+    logger.warning(
+        _kv(
+            "claude_sdk_error_max_turns",
+            request_id=request_id,
+            num_turns=err.num_turns,
+            stop_reason=err.stop_reason,
+            errors=err.errors,
+        )
+    )
     response = ChatCompletionResponse(
         id=request_id,
         model=model,
@@ -561,26 +569,25 @@ def _build_error_max_turns_response(
     return JSONResponse(status_code=200, content=response.model_dump())
 
 
-def _build_sdk_error_response(
-    request_id: str, model: str, err: ClaudeResultError
-) -> JSONResponse:
+def _build_sdk_error_response(request_id: str, model: str, err: ClaudeResultError) -> JSONResponse:
     """Non-recoverable SDK result: return 502 so clients know to retry with
     backoff. Structured body includes the SDK subtype and any errors so
     callers can tell the difference between a max-turns overflow and a
     transport failure."""
-    logger.error(_kv(
-        "claude_sdk_error",
-        request_id=request_id,
-        subtype=err.subtype,
-        num_turns=err.num_turns,
-        errors=err.errors,
-        error_message=err.error_message,
-        stderr_tail_chars=len(err.stderr_tail or ""),
-    ))
+    logger.error(
+        _kv(
+            "claude_sdk_error",
+            request_id=request_id,
+            subtype=err.subtype,
+            num_turns=err.num_turns,
+            errors=err.errors,
+            error_message=err.error_message,
+            stderr_tail_chars=len(err.stderr_tail or ""),
+        )
+    )
     if err.stderr_tail:
         logger.error(
-            f"claude_sdk_error stderr tail (request_id={request_id}):\n"
-            f"{err.stderr_tail}"
+            f"claude_sdk_error stderr tail (request_id={request_id}):\n" f"{err.stderr_tail}"
         )
     return JSONResponse(
         status_code=502,
@@ -611,6 +618,20 @@ _ASSISTANT_ERROR_STATUS = {
     "assistant_unknown": 502,
 }
 
+_ASSISTANT_ERROR_MESSAGE = {
+    "assistant_rate_limit": "Upstream rate limit exceeded",
+    "assistant_billing_error": "Upstream billing error",
+    "assistant_authentication_failed": "Upstream authentication failed",
+    "assistant_invalid_request": "Upstream rejected the request as invalid",
+    "assistant_server_error": "Upstream server error",
+    "assistant_unknown": "Upstream request failed",
+}
+
+
+def _safe_assistant_error_message(subtype: Optional[str]) -> str:
+    """Return a client-safe message that does not leak exception detail."""
+    return _ASSISTANT_ERROR_MESSAGE.get(subtype or "", "Upstream request failed")
+
 
 def _build_assistant_error_response(
     request_id: str, model: str, err: ClaudeResultError
@@ -622,19 +643,21 @@ def _build_assistant_error_response(
         # Conservative default. Callers that want a smarter backoff should
         # inspect upstream rate-limit headers once the SDK exposes them.
         headers = {"Retry-After": "30"}
-    logger.warning(_kv(
-        "claude_sdk_assistant_error",
-        request_id=request_id,
-        subtype=err.subtype,
-        errors=err.errors,
-        status=status,
-    ))
+    logger.warning(
+        _kv(
+            "claude_sdk_assistant_error",
+            request_id=request_id,
+            subtype=err.subtype,
+            errors=err.errors,
+            status=status,
+        )
+    )
     return JSONResponse(
         status_code=status,
         headers=headers,
         content={
             "error": {
-                "message": err.errors[0] if err.errors else str(err),
+                "message": _safe_assistant_error_message(err.subtype),
                 "type": "upstream_api_error",
                 "code": err.subtype or "unknown",
             }
@@ -662,7 +685,9 @@ def _handle_claude_result_error(
     return _build_sdk_error_response(request_id, model, err)
 
 
-def _run_completion_kwargs(claude_options: Dict[str, Any], prompt: str, system_prompt: Optional[str], stream: bool) -> Dict[str, Any]:
+def _run_completion_kwargs(
+    claude_options: Dict[str, Any], prompt: str, system_prompt: Optional[str], stream: bool
+) -> Dict[str, Any]:
     """Extract run_completion keyword arguments from claude_options."""
     return {
         "prompt": prompt,
@@ -714,15 +739,25 @@ async def generate_streaming_response(
                     system_prompt = f"{system_prompt}\n\n{tools_prompt}"
                 else:
                     system_prompt = tools_prompt
-                logger.info(f"Function calling (streaming): injected {len(request.tools)} tool definitions")
+                logger.info(
+                    f"Function calling (streaming): injected {len(request.tools)} tool definitions"
+                )
 
         # Check for JSON mode
-        json_mode = request.response_format and request.response_format.type in ("json_object", "json_schema")
+        json_mode = request.response_format and request.response_format.type in (
+            "json_object",
+            "json_schema",
+        )
         if json_mode:
-            if request.response_format.type == "json_schema" and request.response_format.json_schema:
+            if (
+                request.response_format.type == "json_schema"
+                and request.response_format.json_schema
+            ):
                 schema = request.response_format.json_schema
                 schema_json = json.dumps(schema.schema_ or {}, indent=2)
-                schema_instructions = MessageAdapter.JSON_SCHEMA_TEMPLATE.format(schema_json=schema_json)
+                schema_instructions = MessageAdapter.JSON_SCHEMA_TEMPLATE.format(
+                    schema_json=schema_json
+                )
                 prompt = f"{schema_instructions}\n\n{prompt}"
                 logger.info(f"JSON schema mode (streaming): injected schema into prompt")
             else:
@@ -731,7 +766,9 @@ async def generate_streaming_response(
                 else:
                     system_prompt = MessageAdapter.JSON_MODE_INSTRUCTION
                 prompt = prompt + MessageAdapter.JSON_PROMPT_SUFFIX
-                logger.info("JSON mode enabled (streaming) - instruction added to system and user prompt")
+                logger.info(
+                    "JSON mode enabled (streaming) - instruction added to system and user prompt"
+                )
 
         # Filter content for unsupported features
         prompt = MessageAdapter.filter_content(prompt)
@@ -811,7 +848,13 @@ async def generate_streaming_response(
                                     stream_chunk = ChatCompletionStreamResponse(
                                         id=request_id,
                                         model=request.model,
-                                        choices=[StreamChoice(index=0, delta={"content": stripped}, finish_reason=None)],
+                                        choices=[
+                                            StreamChoice(
+                                                index=0,
+                                                delta={"content": stripped},
+                                                finish_reason=None,
+                                            )
+                                        ],
                                     )
                                     yield f"data: {stream_chunk.model_dump_json()}\n\n"
                                     content_sent = True
@@ -821,7 +864,13 @@ async def generate_streaming_response(
                                 stream_chunk = ChatCompletionStreamResponse(
                                     id=request_id,
                                     model=request.model,
-                                    choices=[StreamChoice(index=0, delta={"content": filtered_text}, finish_reason=None)],
+                                    choices=[
+                                        StreamChoice(
+                                            index=0,
+                                            delta={"content": filtered_text},
+                                            finish_reason=None,
+                                        )
+                                    ],
                                 )
                                 yield f"data: {stream_chunk.model_dump_json()}\n\n"
                                 content_sent = True
@@ -838,7 +887,11 @@ async def generate_streaming_response(
                                 stream_chunk = ChatCompletionStreamResponse(
                                     id=request_id,
                                     model=request.model,
-                                    choices=[StreamChoice(index=0, delta={"content": stripped}, finish_reason=None)],
+                                    choices=[
+                                        StreamChoice(
+                                            index=0, delta={"content": stripped}, finish_reason=None
+                                        )
+                                    ],
                                 )
                                 yield f"data: {stream_chunk.model_dump_json()}\n\n"
                                 content_sent = True
@@ -848,7 +901,13 @@ async def generate_streaming_response(
                             stream_chunk = ChatCompletionStreamResponse(
                                 id=request_id,
                                 model=request.model,
-                                choices=[StreamChoice(index=0, delta={"content": filtered_content}, finish_reason=None)],
+                                choices=[
+                                    StreamChoice(
+                                        index=0,
+                                        delta={"content": filtered_content},
+                                        finish_reason=None,
+                                    )
+                                ],
                             )
                             yield f"data: {stream_chunk.model_dump_json()}\n\n"
                             content_sent = True
@@ -859,14 +918,24 @@ async def generate_streaming_response(
             if remaining:
                 if not role_sent:
                     initial_chunk = ChatCompletionStreamResponse(
-                        id=request_id, model=request.model,
-                        choices=[StreamChoice(index=0, delta={"role": "assistant", "content": ""}, finish_reason=None)],
+                        id=request_id,
+                        model=request.model,
+                        choices=[
+                            StreamChoice(
+                                index=0,
+                                delta={"role": "assistant", "content": ""},
+                                finish_reason=None,
+                            )
+                        ],
                     )
                     yield f"data: {initial_chunk.model_dump_json()}\n\n"
                     role_sent = True
                 flush_chunk = ChatCompletionStreamResponse(
-                    id=request_id, model=request.model,
-                    choices=[StreamChoice(index=0, delta={"content": remaining}, finish_reason=None)],
+                    id=request_id,
+                    model=request.model,
+                    choices=[
+                        StreamChoice(index=0, delta={"content": remaining}, finish_reason=None)
+                    ],
                 )
                 yield f"data: {flush_chunk.model_dump_json()}\n\n"
                 content_sent = True
@@ -877,8 +946,13 @@ async def generate_streaming_response(
             parsed_calls, remaining_text = parse_tool_calls(combined)
             if not role_sent:
                 initial_chunk = ChatCompletionStreamResponse(
-                    id=request_id, model=request.model,
-                    choices=[StreamChoice(index=0, delta={"role": "assistant", "content": ""}, finish_reason=None)],
+                    id=request_id,
+                    model=request.model,
+                    choices=[
+                        StreamChoice(
+                            index=0, delta={"role": "assistant", "content": ""}, finish_reason=None
+                        )
+                    ],
                 )
                 yield f"data: {initial_chunk.model_dump_json()}\n\n"
                 role_sent = True
@@ -888,15 +962,19 @@ async def generate_streaming_response(
                 if remaining_text.strip():
                     tc_delta["content"] = remaining_text.strip()
                 tc_chunk = ChatCompletionStreamResponse(
-                    id=request_id, model=request.model,
+                    id=request_id,
+                    model=request.model,
                     choices=[StreamChoice(index=0, delta=tc_delta, finish_reason=None)],
                 )
                 yield f"data: {tc_chunk.model_dump_json()}\n\n"
                 content_sent = True
             elif combined.strip():
                 text_chunk = ChatCompletionStreamResponse(
-                    id=request_id, model=request.model,
-                    choices=[StreamChoice(index=0, delta={"content": combined}, finish_reason=None)],
+                    id=request_id,
+                    model=request.model,
+                    choices=[
+                        StreamChoice(index=0, delta={"content": combined}, finish_reason=None)
+                    ],
                 )
                 yield f"data: {text_chunk.model_dump_json()}\n\n"
                 content_sent = True
@@ -921,7 +999,9 @@ async def generate_streaming_response(
             combined_content = "".join(json_mode_buffer)
 
             if DEBUG_MODE or VERBOSE:
-                raw_preview = combined_content[:50] if len(combined_content) > 50 else combined_content
+                raw_preview = (
+                    combined_content[:50] if len(combined_content) > 50 else combined_content
+                )
                 raw_end = combined_content[-30:] if len(combined_content) > 30 else combined_content
                 logger.debug(f"Raw response: starts='{raw_preview}' ends='...{raw_end}'")
 
@@ -939,9 +1019,7 @@ async def generate_streaming_response(
                 id=request_id,
                 model=request.model,
                 choices=[
-                    StreamChoice(
-                        index=0, delta={"content": json_content}, finish_reason=None
-                    )
+                    StreamChoice(index=0, delta={"content": json_content}, finish_reason=None)
                 ],
             )
             yield f"data: {json_chunk.model_dump_json()}\n\n"
@@ -1004,24 +1082,32 @@ async def generate_streaming_response(
                     model=request.model,
                     choices=[StreamChoice(index=0, delta={}, finish_reason="length")],
                 )
-                logger.warning(_kv(
-                    "claude_sdk_error_max_turns_stream",
-                    request_id=request_id,
-                    num_turns=sdk_error.num_turns,
-                ))
+                logger.warning(
+                    _kv(
+                        "claude_sdk_error_max_turns_stream",
+                        request_id=request_id,
+                        num_turns=sdk_error.num_turns,
+                    )
+                )
                 yield f"data: {final_chunk.model_dump_json()}\n\n"
                 yield "data: [DONE]\n\n"
             else:
-                logger.error(_kv(
-                    "claude_sdk_error_stream",
-                    request_id=request_id,
-                    subtype=sdk_error.subtype,
-                    errors=sdk_error.errors,
-                ))
+                logger.error(
+                    _kv(
+                        "claude_sdk_error_stream",
+                        request_id=request_id,
+                        subtype=sdk_error.subtype,
+                        errors=sdk_error.errors,
+                    )
+                )
                 err_payload = {
                     "error": {
                         "message": sdk_error.error_message
-                        or (sdk_error.errors[0] if sdk_error.errors else f"SDK returned {sdk_error.subtype}"),
+                        or (
+                            sdk_error.errors[0]
+                            if sdk_error.errors
+                            else f"SDK returned {sdk_error.subtype}"
+                        ),
                         "type": "upstream_sdk_error",
                         "code": sdk_error.subtype or "unknown",
                     }
@@ -1064,7 +1150,7 @@ async def generate_streaming_response(
 
     except Exception as e:
         logger.error(f"Streaming error: {e}")
-        error_chunk = {"error": {"message": str(e), "type": "streaming_error"}}
+        error_chunk = {"error": {"message": "Streaming failed", "type": "streaming_error"}}
         yield f"data: {json.dumps(error_chunk)}\n\n"
 
 
@@ -1137,7 +1223,11 @@ async def chat_completions(
         else:
             # Non-streaming response
             # Check cache if enabled and requested via header
-            cache_enabled = request.headers.get("X-Enable-Cache", "").lower() in ("true", "1", "yes")
+            cache_enabled = request.headers.get("X-Enable-Cache", "").lower() in (
+                "true",
+                "1",
+                "yes",
+            )
             if cache_enabled and request_cache.enabled:
                 request_dict = request_body.model_dump()
                 cached_response = request_cache.get(request_dict)
@@ -1182,21 +1272,30 @@ async def chat_completions(
                         system_prompt = f"{system_prompt}\n\n{tools_prompt}"
                     else:
                         system_prompt = tools_prompt
-                    logger.info(f"Function calling: injected {len(request_body.tools)} tool definitions")
+                    logger.info(
+                        f"Function calling: injected {len(request_body.tools)} tool definitions"
+                    )
 
             # Check for JSON mode
-            json_mode = (
-                request_body.response_format
-                and request_body.response_format.type in ("json_object", "json_schema")
+            json_mode = request_body.response_format and request_body.response_format.type in (
+                "json_object",
+                "json_schema",
             )
             if json_mode:
-                if request_body.response_format.type == "json_schema" and request_body.response_format.json_schema:
+                if (
+                    request_body.response_format.type == "json_schema"
+                    and request_body.response_format.json_schema
+                ):
                     # JSON schema mode: inject schema into prompt (not system_prompt)
                     schema = request_body.response_format.json_schema
                     schema_json = json.dumps(schema.schema_ or {}, indent=2)
-                    schema_instructions = MessageAdapter.JSON_SCHEMA_TEMPLATE.format(schema_json=schema_json)
+                    schema_instructions = MessageAdapter.JSON_SCHEMA_TEMPLATE.format(
+                        schema_json=schema_json
+                    )
                     prompt = f"{schema_instructions}\n\n{prompt}"
-                    logger.info(f"JSON schema mode: injected schema ({len(schema_json)} chars) into prompt")
+                    logger.info(
+                        f"JSON schema mode: injected schema ({len(schema_json)} chars) into prompt"
+                    )
                 else:
                     # Basic JSON object mode
                     if system_prompt:
@@ -1240,16 +1339,24 @@ async def chat_completions(
                 original_len = len(assistant_content)
 
                 if DEBUG_MODE or VERBOSE:
-                    raw_preview = assistant_content[:50] if len(assistant_content) > 50 else assistant_content
-                    raw_end = assistant_content[-30:] if len(assistant_content) > 30 else assistant_content
+                    raw_preview = (
+                        assistant_content[:50] if len(assistant_content) > 50 else assistant_content
+                    )
+                    raw_end = (
+                        assistant_content[-30:]
+                        if len(assistant_content) > 30
+                        else assistant_content
+                    )
                     logger.debug(f"Raw response: starts='{raw_preview}' ends='...{raw_end}'")
 
-                assistant_content, extraction_metadata = MessageAdapter.enforce_json_format_with_metadata(
-                    assistant_content, strict=True
+                assistant_content, extraction_metadata = (
+                    MessageAdapter.enforce_json_format_with_metadata(assistant_content, strict=True)
                 )
 
-                logger.info(f"JSON enforcement: {original_len} chars -> {len(assistant_content)} chars "
-                           f"(method={extraction_metadata.get('method', 'unknown')})")
+                logger.info(
+                    f"JSON enforcement: {original_len} chars -> {len(assistant_content)} chars "
+                    f"(method={extraction_metadata.get('method', 'unknown')})"
+                )
 
                 if DEBUG_MODE or VERBOSE:
                     logger.debug(f"JSON extraction metadata: {extraction_metadata}")
@@ -1323,20 +1430,22 @@ async def chat_completions(
             # triage a single `| json | subtype=...` query instead of grepping
             # DEBUG for num_turns and friends.
             metadata = claude_cli.extract_metadata(chunks)
-            logger.info(_kv(
-                "completion_result",
-                request_id=request_id,
-                session_id=metadata.get("session_id") or actual_session_id,
-                subtype="success",
-                num_turns=metadata.get("num_turns"),
-                duration_ms=metadata.get("duration_ms"),
-                total_cost_usd=metadata.get("total_cost_usd"),
-                is_error=False,
-                finish_reason=finish_reason,
-                model=request_body.model,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-            ))
+            logger.info(
+                _kv(
+                    "completion_result",
+                    request_id=request_id,
+                    session_id=metadata.get("session_id") or actual_session_id,
+                    subtype="success",
+                    num_turns=metadata.get("num_turns"),
+                    duration_ms=metadata.get("duration_ms"),
+                    total_cost_usd=metadata.get("total_cost_usd"),
+                    is_error=False,
+                    finish_reason=finish_reason,
+                    model=request_body.model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                )
+            )
             sdk_circuit_breaker.record(success=True)
 
             return response
@@ -1348,7 +1457,7 @@ async def chat_completions(
     except Exception as e:
         sdk_circuit_breaker.record(success=False)
         logger.error(f"Chat completion error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Chat completion failed")
 
 
 @app.post("/v1/messages")
@@ -1421,10 +1530,12 @@ async def anthropic_messages(
             raw_assistant_content = claude_cli.parse_claude_message(chunks)
         except ClaudeResultError as err:
             if err.subtype == "error_max_turns":
-                logger.warning(_kv(
-                    "claude_sdk_error_max_turns_anthropic",
-                    num_turns=err.num_turns,
-                ))
+                logger.warning(
+                    _kv(
+                        "claude_sdk_error_max_turns_anthropic",
+                        num_turns=err.num_turns,
+                    )
+                )
                 return AnthropicMessagesResponse(
                     model=request_body.model,
                     content=[AnthropicTextBlock(text="")],
@@ -1468,7 +1579,7 @@ async def anthropic_messages(
         raise
     except Exception as e:
         logger.error(f"Anthropic Messages API error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Messages request failed")
 
 
 @app.get("/v1/models")
@@ -1564,6 +1675,7 @@ async def health_check(request: Request):
 # Rolling window of recent /healthz/deep probe outcomes used to compute a
 # short-term failure rate. Fixed-size deque keeps memory bounded.
 import collections  # noqa: E402 - placed here to keep the deep-health section self-contained
+
 _DEEP_HEALTH_WINDOW = collections.deque(maxlen=10)
 _DEEP_HEALTH_FAILURE_THRESHOLD = 0.20  # open breaker above 20% failure
 
@@ -2353,7 +2465,19 @@ async def root():
 @app.post("/v1/debug/request")
 @rate_limit_endpoint("debug")
 async def debug_request_validation(request: Request):
-    """Debug endpoint to test request validation and see what's being sent."""
+    """Debug endpoint to test request validation and see what's being sent.
+
+    Returns a minimal response unless DEBUG_MODE or VERBOSE is enabled, so
+    that exception/request detail is never emitted to production clients.
+    """
+    if not (DEBUG_MODE or VERBOSE):
+        return {
+            "debug_info": {
+                "enabled": False,
+                "hint": "Set DEBUG_MODE=true or VERBOSE=true to enable this endpoint",
+            }
+        }
+
     try:
         # Get the raw request body
         body = await request.body()
@@ -2367,7 +2491,9 @@ async def debug_request_validation(request: Request):
 
             parsed_body = json_lib.loads(raw_body) if raw_body else {}
         except Exception as e:
-            json_error = str(e)
+            # Only expose the exception type, never its message/stack trace.
+            json_error = type(e).__name__
+            logger.warning(f"Debug endpoint JSON parse error: {e}")
 
         # Try to validate against our model
         validation_result = {"valid": False, "errors": []}
@@ -2408,10 +2534,11 @@ async def debug_request_validation(request: Request):
         }
 
     except Exception as e:
+        # Never echo str(e); log it server-side and return only the type.
+        logger.error(f"Debug endpoint error: {e}")
         return {
             "debug_info": {
-                "error": f"Debug endpoint error: {str(e)}",
-                "headers": dict(request.headers),
+                "error_type": type(e).__name__,
                 "method": request.method,
                 "url": str(request.url),
             }

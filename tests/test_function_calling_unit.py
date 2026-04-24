@@ -102,7 +102,7 @@ class TestParseToolCalls:
         assert remaining == text
 
     def test_malformed_json_returns_empty(self):
-        text = '```tool_calls\nnot valid json\n```'
+        text = "```tool_calls\nnot valid json\n```"
         calls, remaining = parse_tool_calls(text)
         assert calls == []
 
@@ -146,7 +146,9 @@ class TestConvertToolMessages:
         assert "Let me check" in result[0].content
 
     def test_tool_result_message(self):
-        msg = Message(role="tool", content="72F and sunny", name="get_weather", tool_call_id="call_123")
+        msg = Message(
+            role="tool", content="72F and sunny", name="get_weather", tool_call_id="call_123"
+        )
         result = convert_tool_messages([msg])
         assert len(result) == 1
         assert result[0].role == "user"
@@ -163,7 +165,13 @@ class TestConvertToolMessages:
             Message(
                 role="assistant",
                 content=None,
-                tool_calls=[ToolCall(id="c1", type="function", function=FunctionCall(name="get_weather", arguments='{"location": "NYC"}'))],
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        type="function",
+                        function=FunctionCall(name="get_weather", arguments='{"location": "NYC"}'),
+                    )
+                ],
             ),
             Message(role="tool", content="72F", name="get_weather", tool_call_id="c1"),
         ]
@@ -175,9 +183,17 @@ class TestConvertToolMessages:
 
     def test_convert_dict_messages(self):
         messages = [
-            {"role": "assistant", "content": None, "tool_calls": [
-                {"id": "c1", "type": "function", "function": {"name": "search", "arguments": '{"q": "test"}'}}
-            ]},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "search", "arguments": '{"q": "test"}'},
+                    }
+                ],
+            },
             {"role": "tool", "content": "results", "name": "search", "tool_call_id": "c1"},
         ]
         result = convert_tool_messages(messages)
