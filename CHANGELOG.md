@@ -5,6 +5,23 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.3] - 2026-04-24
+
+### Fixed
+
+- **Runtime `ModuleNotFoundError: No module named 'opentelemetry'` at
+  first SDK connect**. `claude-agent-sdk 0.1.65` imports
+  `opentelemetry.propagate` unconditionally at
+  `_internal/transport/subprocess_cli.py:413`, but PyPI declares
+  `opentelemetry-api` only as an optional `[otel]` extra. The 2.9.2
+  Docker image (rebuilt with `poetry install --only main`) therefore
+  shipped without OTel, and the first chat completion after a fresh
+  deploy raised during `connect()`. Fix: pin
+  `claude-agent-sdk = {version = "0.1.65", extras = ["otel"]}` in
+  `pyproject.toml` so the dependency resolves into the main group.
+  `poetry lock` regenerated; `opentelemetry-api 1.41.1` now ships in
+  the image.
+
 ## [2.9.2] - 2026-04-24
 
 ### Build / CI
