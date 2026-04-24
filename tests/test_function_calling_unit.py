@@ -10,7 +10,6 @@ from src.function_calling import (
 )
 from src.models import Message, ToolCall, FunctionCall
 
-
 SAMPLE_TOOLS = [
     {
         "type": "function",

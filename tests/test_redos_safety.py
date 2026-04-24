@@ -14,7 +14,6 @@ import pytest
 
 from src.message_adapter import MessageAdapter
 
-
 # Budget in seconds. Linear implementations run these inputs in tens of
 # milliseconds; the original lazy patterns would spiral into seconds-to-hours.
 REDOS_BUDGET_SECONDS = 1.0

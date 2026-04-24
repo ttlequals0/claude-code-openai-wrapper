@@ -5,6 +5,36 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.4] - 2026-04-24
+
+### Security
+
+Closes all seven open Dependabot alerts by bumping vulnerable deps.
+Three affect the runtime image; four are dev-only and reach the image
+only via a CI container.
+
+| Package | From | To | CVE | Severity | Runtime? |
+|---------|------|----|-----|----------|----------|
+| black | 24.10.0 | 26.3.1 | CVE-2026-32274 (arbitrary file write from unsanitized cache input) | high | dev only |
+| filelock | 3.20.1 | 3.29.0 | CVE-2026-22701 (TOCTOU symlink) | medium | dev only |
+| requests | 2.32.4 | 2.33.1 | CVE-2026-25645 (insecure tmp file reuse in `extract_zipped_paths`) | medium | runtime (also in dev group) |
+| pytest | 8.4.1 | 9.0.3 | CVE-2025-71176 (tmpdir handling) | medium | dev only |
+| python-multipart | 0.0.22 | 0.0.26 | CVE-2026-40347 (DoS via large preamble/epilogue) | medium | runtime |
+| python-dotenv | 1.1.1 | 1.2.2 | CVE-2026-28684 (symlink follow in `set_key`) | medium | runtime |
+| Pygments | 2.19.2 | 2.20.0 | CVE-2026-4539 (GUID ReDoS) | low | dev only (transitive) |
+
+### Build / tooling
+
+- `pyproject.toml`: direct constraint bumps to match the lock above,
+  plus `pytest-asyncio ^0.23 -> ^1.3.0` (required by the pytest 9
+  upgrade - pytest-asyncio < 1.x does not support pytest 9).
+- Reformatted three test files under `tests/` with black 26 so the
+  CI linting gate stays green.
+
+### Tests
+
+Full suite stays at 650 passed, 31 skipped under pytest 9.0.3.
+
 ## [2.9.3] - 2026-04-24
 
 ### Fixed
