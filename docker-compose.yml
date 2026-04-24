@@ -2,6 +2,11 @@ version: '3.8'
 services:
   claude-wrapper:
     image: ttlequals0/claude-code-openai-wrapper:latest
+    # Always pull a fresh :latest on stack redeploy so the Portainer
+    # webhook actually rolls forward. Without this, docker compose up
+    # reuses the locally cached :latest layer and the new image sits on
+    # Docker Hub unused.
+    pull_policy: always
     # Build from local Dockerfile targeting the prod stage. Dev iteration
     # should override with `target: dev` (or use `docker build --target dev`).
     build:
