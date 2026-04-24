@@ -51,7 +51,7 @@ class RetryState:
         If a retry-after header value is provided, use it as a minimum.
         """
         # Exponential backoff: base * 2^attempt
-        exp_delay = self.config.base_delay_ms * (2 ** self.attempt)
+        exp_delay = self.config.base_delay_ms * (2**self.attempt)
         # Cap at max delay
         exp_delay = min(exp_delay, self.config.max_delay_ms)
         # Add jitter (0-25% of delay)
@@ -65,7 +65,9 @@ class RetryState:
 
         return delay_ms / 1000  # Return seconds
 
-    def should_retry(self, status_code: Optional[int] = None, error: Optional[Exception] = None) -> bool:
+    def should_retry(
+        self, status_code: Optional[int] = None, error: Optional[Exception] = None
+    ) -> bool:
         """Determine if the request should be retried."""
         if self.attempt >= self.config.max_retries:
             return False

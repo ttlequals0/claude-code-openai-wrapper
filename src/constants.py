@@ -28,19 +28,47 @@ import os
 
 # Claude Code tool inventory (sourced from open-sourced Claude Code CLI)
 CLAUDE_TOOLS = [
-    "Agent", "Task", "SendMessage", "ListPeers",
+    "Agent",
+    "Task",
+    "SendMessage",
+    "ListPeers",
     "Bash",
-    "Glob", "Grep", "Read", "Edit", "Write", "NotebookEdit",
-    "WebFetch", "WebSearch",
-    "TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop",
-    "EnterPlanMode", "ExitPlanMode", "VerifyPlanExecution",
-    "EnterWorktree", "ExitWorktree",
-    "ToolSearch", "AskUserQuestion",
-    "CronCreate", "CronDelete", "CronList", "RemoteTrigger",
-    "TodoWrite", "Skill", "Brief", "Config",
-    "REPL", "Sleep", "Monitor",
-    "SendUserFile", "PushNotification",
-    "ListMcpResources", "ReadMcpResource",
+    "Glob",
+    "Grep",
+    "Read",
+    "Edit",
+    "Write",
+    "NotebookEdit",
+    "WebFetch",
+    "WebSearch",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskGet",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "EnterPlanMode",
+    "ExitPlanMode",
+    "VerifyPlanExecution",
+    "EnterWorktree",
+    "ExitWorktree",
+    "ToolSearch",
+    "AskUserQuestion",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "RemoteTrigger",
+    "TodoWrite",
+    "Skill",
+    "Brief",
+    "Config",
+    "REPL",
+    "Sleep",
+    "Monitor",
+    "SendUserFile",
+    "PushNotification",
+    "ListMcpResources",
+    "ReadMcpResource",
 ]
 
 # Default tools to allow when tools are enabled
@@ -66,7 +94,11 @@ DEFAULT_DISALLOWED_TOOLS = [
 
 # Model metadata (sourced from open-sourced Claude Code CLI)
 # Only models that differ from the default are listed explicitly.
-_DEFAULT_MODEL_META = {"context_window": 200_000, "default_max_output": 32_000, "max_output_limit": 64_000}
+_DEFAULT_MODEL_META = {
+    "context_window": 200_000,
+    "default_max_output": 32_000,
+    "max_output_limit": 64_000,
+}
 
 _MODEL_OVERRIDES = {
     "claude-opus-4-7": {

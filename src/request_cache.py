@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class CacheEntry:
     """A cached response with metadata."""
+
     response: Dict[str, Any]
     created_at: float
     expires_at: float
@@ -225,8 +226,7 @@ class RequestCache:
 
         with self._lock:
             expired_keys = [
-                key for key, entry in self._cache.items()
-                if current_time > entry.expires_at
+                key for key, entry in self._cache.items() if current_time > entry.expires_at
             ]
 
             for key in expired_keys:

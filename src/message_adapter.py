@@ -81,8 +81,7 @@ def _extract_first_block(content: str, tag: str) -> Optional[str]:
 # (well above any plausible legitimate image reference) make the match
 # linear while still removing the unsupported content.
 _IMAGE_RE = re.compile(
-    r"\[Image:[^\]]{0,1024}\]"
-    r"|data:image/[A-Za-z0-9.+-]{1,32};base64,[^\s]{0,65536}"
+    r"\[Image:[^\]]{0,1024}\]" r"|data:image/[A-Za-z0-9.+-]{1,32};base64,[^\s]{0,65536}"
 )
 
 # Whitespace collapser used at the tail of filter_content.
@@ -92,6 +91,7 @@ _MULTI_NEWLINE_RE = re.compile(r"\n\s*\n\s*\n")
 @dataclass
 class JsonExtractionResult:
     """Result of JSON extraction with metadata about the extraction process."""
+
     content: Optional[str]
     success: bool
     method: str  # "direct", "preamble_removed", "code_block", "brace_match", "fallback", "failed"
@@ -134,7 +134,7 @@ class JsonFenceStripper:
                 self._opening_stripped = True
                 for fence in self._FENCES:
                     if self._opening_buf.startswith(fence):
-                        remainder = self._opening_buf[len(fence):]
+                        remainder = self._opening_buf[len(fence) :]
                         self._opening_buf = ""
                         return self._apply_holdback(remainder)
                 # No match, release everything
@@ -149,8 +149,8 @@ class JsonFenceStripper:
         if len(combined) <= len(self._CLOSE):
             self._holdback = combined
             return ""
-        self._holdback = combined[-len(self._CLOSE):]
-        return combined[:-len(self._CLOSE)]
+        self._holdback = combined[-len(self._CLOSE) :]
+        return combined[: -len(self._CLOSE)]
 
     def flush(self) -> str:
         result = self._holdback
@@ -250,7 +250,7 @@ class MessageAdapter:
                 escape_next = False
                 continue
 
-            if char == '\\':
+            if char == "\\":
                 escape_next = True
                 continue
 
@@ -266,7 +266,7 @@ class MessageAdapter:
             elif char == end_char:
                 depth -= 1
                 if depth == 0:
-                    candidate = content[start_idx:i + 1]
+                    candidate = content[start_idx : i + 1]
                     try:
                         json.loads(candidate)
                         return candidate
@@ -367,10 +367,12 @@ class MessageAdapter:
         content_lower = content.lower()
         for preamble in MessageAdapter.COMMON_PREAMBLES:
             if content_lower.startswith(preamble.lower()):
-                stripped = content[len(preamble):].strip()
+                stripped = content[len(preamble) :].strip()
                 try:
                     json.loads(stripped)
-                    logger.debug(f"extract_json: Extracted after removing preamble '{preamble}' ({len(stripped)} chars)")
+                    logger.debug(
+                        f"extract_json: Extracted after removing preamble '{preamble}' ({len(stripped)} chars)"
+                    )
                     return stripped
                 except json.JSONDecodeError:
                     # Preamble removed but still not valid - try other methods
@@ -398,13 +400,17 @@ class MessageAdapter:
         # Try object first
         balanced_obj = MessageAdapter._find_balanced_json(content, "{", "}")
         if balanced_obj:
-            logger.debug(f"extract_json: Extracted via balanced brace matching ({len(balanced_obj)} chars)")
+            logger.debug(
+                f"extract_json: Extracted via balanced brace matching ({len(balanced_obj)} chars)"
+            )
             return balanced_obj
 
         # Try array
         balanced_arr = MessageAdapter._find_balanced_json(content, "[", "]")
         if balanced_arr:
-            logger.debug(f"extract_json: Extracted via balanced bracket matching ({len(balanced_arr)} chars)")
+            logger.debug(
+                f"extract_json: Extracted via balanced bracket matching ({len(balanced_arr)} chars)"
+            )
             return balanced_arr
 
         # Case 5: First-to-last fallback (less precise but handles some edge cases)
@@ -414,7 +420,9 @@ class MessageAdapter:
             candidate = content[first_brace : last_brace + 1]
             try:
                 json.loads(candidate)
-                logger.debug(f"extract_json: Extracted via first-to-last brace ({len(candidate)} chars)")
+                logger.debug(
+                    f"extract_json: Extracted via first-to-last brace ({len(candidate)} chars)"
+                )
                 return candidate
             except json.JSONDecodeError:
                 pass
@@ -425,7 +433,9 @@ class MessageAdapter:
             candidate = content[first_bracket : last_bracket + 1]
             try:
                 json.loads(candidate)
-                logger.debug(f"extract_json: Extracted via first-to-last bracket ({len(candidate)} chars)")
+                logger.debug(
+                    f"extract_json: Extracted via first-to-last bracket ({len(candidate)} chars)"
+                )
                 return candidate
             except json.JSONDecodeError:
                 pass
@@ -478,7 +488,7 @@ class MessageAdapter:
         content_lower = content.lower()
         for preamble in MessageAdapter.COMMON_PREAMBLES:
             if content_lower.startswith(preamble.lower()):
-                stripped = content[len(preamble):].strip()
+                stripped = content[len(preamble) :].strip()
                 try:
                     json.loads(stripped)
                     return JsonExtractionResult(
@@ -602,7 +612,9 @@ class MessageAdapter:
         return content
 
     @staticmethod
-    def enforce_json_format_with_metadata(content: str, strict: bool = False) -> Tuple[str, Dict[str, Any]]:
+    def enforce_json_format_with_metadata(
+        content: str, strict: bool = False
+    ) -> Tuple[str, Dict[str, Any]]:
         """
         Enforce JSON format on content and return metadata about the extraction.
 
@@ -625,10 +637,14 @@ class MessageAdapter:
         }
 
         if result.success and result.content:
-            logger.debug(f"enforce_json_format_with_metadata: method={result.method}, "
-                        f"original={result.original_length}, extracted={result.extracted_length}")
+            logger.debug(
+                f"enforce_json_format_with_metadata: method={result.method}, "
+                f"original={result.original_length}, extracted={result.extracted_length}"
+            )
             if result.preamble_found:
-                logger.debug(f"enforce_json_format_with_metadata: removed preamble '{result.preamble_found}'")
+                logger.debug(
+                    f"enforce_json_format_with_metadata: removed preamble '{result.preamble_found}'"
+                )
             return result.content, metadata
 
         logger.warning(f"enforce_json_format_with_metadata: Extraction failed, strict={strict}")

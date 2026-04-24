@@ -101,9 +101,7 @@ class TestModelService:
             mock_auth.auth_method = "anthropic"
             with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}):
                 with patch.object(model_service, "_http_client") as mock_client:
-                    mock_client.get = AsyncMock(
-                        side_effect=httpx.RequestError("connection failed")
-                    )
+                    mock_client.get = AsyncMock(side_effect=httpx.RequestError("connection failed"))
 
                     result = await model_service.fetch_models_from_api()
 
@@ -117,6 +115,7 @@ class TestModelService:
             with patch.dict("os.environ", {}, clear=True):
                 # Ensure ANTHROPIC_API_KEY is not set
                 import os
+
                 if "ANTHROPIC_API_KEY" in os.environ:
                     del os.environ["ANTHROPIC_API_KEY"]
 
@@ -409,9 +408,7 @@ class TestModelServiceRefresh:
     @pytest.mark.asyncio
     async def test_initialize_sets_source_api_on_success(self, model_service):
         """Initialize sets source to 'api' when fetch succeeds."""
-        with patch.object(
-            model_service, "fetch_models_from_api", new_callable=AsyncMock
-        ) as mock:
+        with patch.object(model_service, "fetch_models_from_api", new_callable=AsyncMock) as mock:
             mock.return_value = ["model-1", "model-2"]
 
             await model_service.initialize()
@@ -422,9 +419,7 @@ class TestModelServiceRefresh:
     @pytest.mark.asyncio
     async def test_initialize_sets_source_fallback_on_failure(self, model_service):
         """Initialize sets source to 'fallback' when fetch fails."""
-        with patch.object(
-            model_service, "fetch_models_from_api", new_callable=AsyncMock
-        ) as mock:
+        with patch.object(model_service, "fetch_models_from_api", new_callable=AsyncMock) as mock:
             mock.return_value = None
 
             await model_service.initialize()

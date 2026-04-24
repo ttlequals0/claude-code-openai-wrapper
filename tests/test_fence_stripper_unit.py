@@ -14,7 +14,7 @@ class TestJsonFenceStripper:
 
     def test_strips_json_fence(self):
         s = JsonFenceStripper()
-        chunks = ['```json\n', '{"key": "val', 'ue"}', '\n```']
+        chunks = ["```json\n", '{"key": "val', 'ue"}', "\n```"]
         output = ""
         for c in chunks:
             output += s.process_delta(c)
@@ -24,7 +24,7 @@ class TestJsonFenceStripper:
 
     def test_strips_bare_fence(self):
         s = JsonFenceStripper()
-        chunks = ['```\n', '{"a": 1}', '\n```']
+        chunks = ["```\n", '{"a": 1}', "\n```"]
         output = ""
         for c in chunks:
             output += s.process_delta(c)

@@ -57,7 +57,7 @@ def parse_tool_calls(response_text: str) -> tuple[list, str]:
     if match:
         try:
             calls = json.loads(match.group(1).strip())
-            remaining = response_text[:match.start()] + response_text[match.end():]
+            remaining = response_text[: match.start()] + response_text[match.end() :]
             remaining = remaining.strip()
             return (calls, remaining)
         except json.JSONDecodeError:
@@ -71,7 +71,7 @@ def parse_tool_calls(response_text: str) -> tuple[list, str]:
         start = bare_match.start()
         # Try increasingly longer substrings to find valid JSON
         for end in range(len(response_text), start, -1):
-            if response_text[end - 1] == ']':
+            if response_text[end - 1] == "]":
                 try:
                     calls = json.loads(response_text[start:end])
                     remaining = response_text[:start] + response_text[end:]
@@ -89,14 +89,16 @@ def format_tool_calls(parsed_calls: list) -> list:
     for call in parsed_calls:
         name = call.get("name", "")
         arguments = call.get("arguments", {})
-        result.append(ToolCall(
-            id=f"call_{uuid4().hex[:24]}",
-            type="function",
-            function=FunctionCall(
-                name=name,
-                arguments=json.dumps(arguments),
-            ),
-        ))
+        result.append(
+            ToolCall(
+                id=f"call_{uuid4().hex[:24]}",
+                type="function",
+                function=FunctionCall(
+                    name=name,
+                    arguments=json.dumps(arguments),
+                ),
+            )
+        )
     return result
 
 
@@ -142,7 +144,9 @@ def convert_tool_messages(messages: list) -> list:
             tid = tool_call_id or "unknown"
             tname = name or "unknown"
             tcontent = content or ""
-            converted.append(Message(role="user", content=f"[Result of {tname} ({tid}): {tcontent}]"))
+            converted.append(
+                Message(role="user", content=f"[Result of {tname} ({tid}): {tcontent}]")
+            )
 
         else:
             converted.append(msg)

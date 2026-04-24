@@ -23,7 +23,7 @@ class TestExtractJson:
 
     def test_extract_json_pure_array(self):
         """Pure JSON array is returned as-is."""
-        content = '[1, 2, 3, 4, 5]'
+        content = "[1, 2, 3, 4, 5]"
         result = MessageAdapter.extract_json(content)
         assert result == content
 
@@ -35,20 +35,20 @@ class TestExtractJson:
 
     def test_extract_json_markdown_block(self):
         """Extracts JSON from ```json code block."""
-        content = '''Here is the data:
+        content = """Here is the data:
 ```json
 {"items": [1, 2, 3]}
 ```
-That's all!'''
+That's all!"""
         result = MessageAdapter.extract_json(content)
         assert result == '{"items": [1, 2, 3]}'
 
     def test_extract_json_generic_code_block(self):
         """Extracts JSON from generic ``` code block."""
-        content = '''Response:
+        content = """Response:
 ```
 {"status": "ok"}
-```'''
+```"""
         result = MessageAdapter.extract_json(content)
         assert result == '{"status": "ok"}'
 
@@ -60,27 +60,27 @@ That's all!'''
 
     def test_extract_json_embedded_array(self):
         """Finds JSON array embedded in text."""
-        content = 'Available items: [1, 2, 3] are ready.'
+        content = "Available items: [1, 2, 3] are ready."
         result = MessageAdapter.extract_json(content)
-        assert result == '[1, 2, 3]'
+        assert result == "[1, 2, 3]"
 
     def test_extract_json_nested_object(self):
         """Extracts nested JSON objects."""
-        content = '''Result: {"outer": {"inner": {"deep": "value"}}}'''
+        content = """Result: {"outer": {"inner": {"deep": "value"}}}"""
         result = MessageAdapter.extract_json(content)
         assert result is not None
         assert '"deep": "value"' in result
 
     def test_extract_json_complex_array(self):
         """Extracts complex JSON arrays."""
-        content = '''Data: [{"id": 1}, {"id": 2}]'''
+        content = """Data: [{"id": 1}, {"id": 2}]"""
         result = MessageAdapter.extract_json(content)
         assert result is not None
         assert '"id": 1' in result
 
     def test_extract_json_no_json(self):
         """Returns None when no valid JSON found."""
-        content = 'This is just plain text with no JSON.'
+        content = "This is just plain text with no JSON."
         result = MessageAdapter.extract_json(content)
         assert result is None
 
@@ -92,7 +92,7 @@ That's all!'''
 
     def test_extract_json_empty_string(self):
         """Returns None for empty string."""
-        result = MessageAdapter.extract_json('')
+        result = MessageAdapter.extract_json("")
         assert result is None
 
     def test_extract_json_none_input(self):
@@ -102,16 +102,16 @@ That's all!'''
 
     def test_extract_json_prefers_code_block(self):
         """Prefers code block JSON over embedded JSON."""
-        content = '''Text {"wrong": "json"}
+        content = """Text {"wrong": "json"}
 ```json
 {"correct": "json"}
-```'''
+```"""
         result = MessageAdapter.extract_json(content)
         assert result == '{"correct": "json"}'
 
     def test_extract_json_multiline(self):
         """Extracts multiline JSON from code block."""
-        content = '''```json
+        content = """```json
 {
     "name": "test",
     "items": [
@@ -120,7 +120,7 @@ That's all!'''
         3
     ]
 }
-```'''
+```"""
         result = MessageAdapter.extract_json(content)
         assert result is not None
         assert '"name": "test"' in result
@@ -138,7 +138,7 @@ class TestEnforceJsonFormat:
 
     def test_enforce_json_valid_array(self):
         """Valid JSON array passes through."""
-        content = '[1, 2, 3]'
+        content = "[1, 2, 3]"
         result = MessageAdapter.enforce_json_format(content)
         assert result == content
 
@@ -150,28 +150,28 @@ class TestEnforceJsonFormat:
 
     def test_enforce_json_strict_fallback(self):
         """Returns '[]' on failure in strict mode."""
-        content = 'No JSON here at all!'
+        content = "No JSON here at all!"
         result = MessageAdapter.enforce_json_format(content, strict=True)
-        assert result == '[]'
+        assert result == "[]"
 
     def test_enforce_json_non_strict_returns_original(self):
         """Returns original content on failure in non-strict mode."""
-        content = 'No JSON here at all!'
+        content = "No JSON here at all!"
         result = MessageAdapter.enforce_json_format(content, strict=False)
         assert result == content
 
     def test_enforce_json_from_markdown(self):
         """Extracts JSON from markdown code block."""
-        content = '''```json
+        content = """```json
 {"extracted": true}
-```'''
+```"""
         result = MessageAdapter.enforce_json_format(content)
         assert result == '{"extracted": true}'
 
     def test_enforce_json_empty_strict(self):
         """Empty input returns '[]' in strict mode."""
-        result = MessageAdapter.enforce_json_format('', strict=True)
-        assert result == '[]'
+        result = MessageAdapter.enforce_json_format("", strict=True)
+        assert result == "[]"
 
 
 class TestResponseFormatModel:
@@ -225,7 +225,10 @@ class TestResponseFormatModel:
         """json_schema type with schema definition."""
         rf = ResponseFormat(
             type="json_schema",
-            json_schema={"name": "test", "schema": {"type": "object", "properties": {"x": {"type": "number"}}}},
+            json_schema={
+                "name": "test",
+                "schema": {"type": "object", "properties": {"x": {"type": "number"}}},
+            },
         )
         assert rf.type == "json_schema"
         assert rf.json_schema is not None
@@ -316,12 +319,12 @@ class TestJsonExtractionEdgeCases:
 
     def test_multiple_json_blocks_returns_first_valid(self):
         """When multiple code blocks exist, returns valid JSON from first."""
-        content = '''```json
+        content = """```json
 {"first": true}
 ```
 ```json
 {"second": true}
-```'''
+```"""
         result = MessageAdapter.extract_json(content)
         assert result == '{"first": true}'
 
@@ -351,7 +354,7 @@ class TestBalancedJsonExtraction:
 
     def test_escaped_quotes_in_strings(self):
         """Handles escaped quotes within strings."""
-        content = '''{"message": "He said \\"hello\\" to me", "count": 1}'''
+        content = """{"message": "He said \\"hello\\" to me", "count": 1}"""
         result = MessageAdapter.extract_json(content)
         assert result is not None
         assert '\\"hello\\"' in result
@@ -372,13 +375,13 @@ class TestBalancedJsonExtraction:
 
     def test_preamble_stripping(self):
         """Removes common Claude preambles before JSON."""
-        content = "Here's the JSON: {\"key\": \"value\"}"
+        content = 'Here\'s the JSON: {"key": "value"}'
         result = MessageAdapter.extract_json(content)
         assert result == '{"key": "value"}'
 
     def test_heres_the_response_preamble(self):
         """Handles 'Here is the response:' preamble."""
-        content = "Here is the response: {\"status\": \"ok\"}"
+        content = 'Here is the response: {"status": "ok"}'
         result = MessageAdapter.extract_json(content)
         assert result == '{"status": "ok"}'
 
@@ -386,7 +389,7 @@ class TestBalancedJsonExtraction:
         """Handles 'Result:' preamble."""
         content = "Result: [1, 2, 3, 4, 5]"
         result = MessageAdapter.extract_json(content)
-        assert result == '[1, 2, 3, 4, 5]'
+        assert result == "[1, 2, 3, 4, 5]"
 
 
 class TestJsonExtractionMetadata:
@@ -402,7 +405,7 @@ class TestJsonExtractionMetadata:
 
     def test_preamble_removed_method(self):
         """Reports 'preamble_removed' method when preamble stripped."""
-        content = "Here's the JSON: {\"key\": \"value\"}"
+        content = 'Here\'s the JSON: {"key": "value"}'
         result = MessageAdapter.extract_json_with_metadata(content)
         assert result.success is True
         assert result.method == "preamble_removed"
@@ -410,9 +413,9 @@ class TestJsonExtractionMetadata:
 
     def test_code_block_method(self):
         """Reports 'code_block' method for markdown extraction."""
-        content = '''```json
+        content = """```json
 {"extracted": true}
-```'''
+```"""
         result = MessageAdapter.extract_json_with_metadata(content)
         assert result.success is True
         assert result.method == "code_block"
@@ -433,7 +436,7 @@ class TestJsonExtractionMetadata:
 
     def test_failure_reporting(self):
         """Reports failure correctly for invalid content."""
-        content = 'No JSON here at all!'
+        content = "No JSON here at all!"
         result = MessageAdapter.extract_json_with_metadata(content)
         assert result.success is False
         assert result.method == "failed"
@@ -469,23 +472,25 @@ class TestEnforceJsonFormatWithMetadata:
 
     def test_strict_mode_in_metadata(self):
         """Strict mode is reflected in metadata."""
-        content = 'No JSON'
+        content = "No JSON"
         _, metadata_strict = MessageAdapter.enforce_json_format_with_metadata(content, strict=True)
-        _, metadata_non_strict = MessageAdapter.enforce_json_format_with_metadata(content, strict=False)
+        _, metadata_non_strict = MessageAdapter.enforce_json_format_with_metadata(
+            content, strict=False
+        )
 
         assert metadata_strict["strict_mode"] is True
         assert metadata_non_strict["strict_mode"] is False
 
     def test_fallback_used_on_failure(self):
         """Reports fallback_used when extraction fails."""
-        content = 'No JSON here!'
+        content = "No JSON here!"
         _, metadata = MessageAdapter.enforce_json_format_with_metadata(content, strict=True)
         assert metadata.get("fallback_used") is True
         assert metadata.get("fallback_value") == "[]"
 
     def test_preamble_in_metadata(self):
         """Preamble is included in metadata when found."""
-        content = "Here's the JSON: {\"key\": \"value\"}"
+        content = 'Here\'s the JSON: {"key": "value"}'
         _, metadata = MessageAdapter.enforce_json_format_with_metadata(content)
         assert metadata.get("preamble_found") == "Here's the JSON:"
 

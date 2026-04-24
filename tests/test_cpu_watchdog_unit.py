@@ -48,7 +48,13 @@ class TestCPUWatchdog:
         assert wd._strikes == 0
 
     def test_env_vars_read_at_import(self):
-        from src.cpu_watchdog import WATCHDOG_ENABLED, WATCHDOG_INTERVAL, WATCHDOG_CPU_THRESHOLD, WATCHDOG_STRIKES
+        from src.cpu_watchdog import (
+            WATCHDOG_ENABLED,
+            WATCHDOG_INTERVAL,
+            WATCHDOG_CPU_THRESHOLD,
+            WATCHDOG_STRIKES,
+        )
+
         assert isinstance(WATCHDOG_ENABLED, bool)
         assert isinstance(WATCHDOG_INTERVAL, int)
         assert isinstance(WATCHDOG_CPU_THRESHOLD, float)

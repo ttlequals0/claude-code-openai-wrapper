@@ -105,8 +105,10 @@ class TestCircuitBreakerHalfOpen:
 class TestCircuitBreakerSnapshot:
     def test_snapshot_exposes_state_and_ratio(self):
         b = _make_breaker()
-        b.allow_request(); b.record(success=True)
-        b.allow_request(); b.record(success=False)
+        b.allow_request()
+        b.record(success=True)
+        b.allow_request()
+        b.record(success=False)
         snap = b.snapshot()
         assert snap["state"] == CircuitBreakerState.CLOSED
         assert snap["window_size"] == 2
