@@ -5,6 +5,32 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.2] - 2026-04-24
+
+### Build / CI
+
+- `Dockerfile`: `poetry install --only main` now excludes dev packages
+  from the runtime image. Removes the one Trivy HIGH with an upstream
+  fix (CVE-2026-32274, black < 26.3.1) and drops image size from
+  1.18 GB to 775 MB. BUILD_INFO stamps cleanly.
+- Added `.dockerignore` so `COPY . /app` stops pulling `.git`, `.venv`,
+  `.hypothesis`, `.pytest_cache`, `tests`, `docs`, `.env*`, and editor
+  cruft.
+- Remaining Trivy HIGHs (7) are in the Debian 13.4 base (ncurses,
+  nghttp2, systemd); all `fix: null` upstream. Accepted risk until
+  `python:3.12-slim` rebases.
+- `.github/workflows/ci.yml`: added `timeout-minutes: 15`,
+  `fail-fast: false`, `poetry check --lock` to catch lockfile drift,
+  replaced deprecated `safety check` with `pip-audit`, and added a
+  `docker` job that smoke-builds the prod image on every PR.
+- `.github/workflows/claude.yml`: repo-specific `claude_args` with a
+  read-only tool allowlist (no write commands, no PR mutations).
+- Ran `black` across `src/` and `tests/` so the linting gate in CI
+  actually passes; 18 files reformatted with no behavioural change.
+- Disabled the `Claude Code Review` workflow upstream; the file was
+  removed from the repo in 2.9.1 but `pull_request_target` kept
+  executing it from `main` until explicit disable.
+
 ## [2.9.1] - 2026-04-24
 
 ### Security
