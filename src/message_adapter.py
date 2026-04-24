@@ -8,6 +8,87 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+# Maximum length of content passed through filter_content(). Inputs larger
+# than this are returned unchanged to avoid worst-case work on
+# pathological inputs (ReDoS defence in depth).
+_MAX_FILTER_LENGTH = 1_000_000
+
+# Tag stripping is done with ``str.find`` below rather than regex, which
+# keeps the work strictly linear in input length even when the closing
+# tag is missing. CodeQL's py/polynomial-redos rule flags the original
+# "<tag>.*?</tag>" shape (and, in practice, non-backtracking regex
+# rewrites still rescan on unterminated input).
+
+_TOOL_TAGS = (
+    "read_file",
+    "write_file",
+    "bash",
+    "search_files",
+    "str_replace_editor",
+    "args",
+    "ask_followup_question",
+    "attempt_completion",
+    "question",
+    "follow_up",
+    "suggest",
+)
+
+
+def _strip_tag_blocks(content: str, tag: str) -> str:
+    """Remove every ``<tag>...</tag>`` block from ``content`` in linear time.
+
+    Unlike regex-based stripping, this uses ``str.find`` (C-implemented,
+    single-pass search) so pathological inputs like ``"<tag>" * N + "x"``
+    complete in O(N) rather than backtracking quadratically.
+    """
+    open_tag = f"<{tag}>"
+    close_tag = f"</{tag}>"
+    if open_tag not in content:
+        return content
+    parts: List[str] = []
+    i = 0
+    while True:
+        start = content.find(open_tag, i)
+        if start == -1:
+            parts.append(content[i:])
+            return "".join(parts)
+        parts.append(content[i:start])
+        end = content.find(close_tag, start + len(open_tag))
+        if end == -1:
+            # No matching close tag - keep the remainder as-is rather than
+            # dropping user content, and bail out.
+            parts.append(content[start:])
+            return "".join(parts)
+        i = end + len(close_tag)
+
+
+def _extract_first_block(content: str, tag: str) -> Optional[str]:
+    """Return the inner text of the first ``<tag>...</tag>`` block or ``None``."""
+    open_tag = f"<{tag}>"
+    close_tag = f"</{tag}>"
+    start = content.find(open_tag)
+    if start == -1:
+        return None
+    inner_start = start + len(open_tag)
+    end = content.find(close_tag, inner_start)
+    if end == -1:
+        return None
+    return content[inner_start:end]
+
+
+# Bounded image-reference pattern. The originals used lazy ".*?" with a
+# trailing lookahead which CodeQL flags as polynomial. Fixed upper bounds
+# (well above any plausible legitimate image reference) make the match
+# linear while still removing the unsupported content.
+_IMAGE_RE = re.compile(
+    r"\[Image:[^\]]{0,1024}\]"
+    r"|data:image/[A-Za-z0-9.+-]{1,32};base64,[^\s]{0,65536}"
+)
+
+# Whitespace collapser used at the tail of filter_content.
+_MULTI_NEWLINE_RE = re.compile(r"\n\s*\n\s*\n")
+
+
 @dataclass
 class JsonExtractionResult:
     """Result of JSON extraction with metadata about the extraction process."""
@@ -595,54 +676,34 @@ class MessageAdapter:
         if not content:
             return content or ""
 
+        # Defence in depth: cap work on adversarial inputs.
+        if len(content) > _MAX_FILTER_LENGTH:
+            return content
+
         # Remove thinking blocks (common when tools are disabled but Claude tries to think)
-        thinking_pattern = r"<thinking>.*?</thinking>"
-        content = re.sub(thinking_pattern, "", content, flags=re.DOTALL)
+        content = _strip_tag_blocks(content, "thinking")
 
         # Extract content from attempt_completion blocks (these contain the actual user response)
-        attempt_completion_pattern = r"<attempt_completion>(.*?)</attempt_completion>"
-        attempt_matches = re.findall(attempt_completion_pattern, content, flags=re.DOTALL)
-        if attempt_matches:
-            # Use the content from the attempt_completion block
-            extracted_content = attempt_matches[0].strip()
+        attempt_inner = _extract_first_block(content, "attempt_completion")
+        if attempt_inner is not None:
+            extracted_content = attempt_inner.strip()
 
             # If there's a <result> tag inside, extract from that
-            result_pattern = r"<result>(.*?)</result>"
-            result_matches = re.findall(result_pattern, extracted_content, flags=re.DOTALL)
-            if result_matches:
-                extracted_content = result_matches[0].strip()
+            result_inner = _extract_first_block(extracted_content, "result")
+            if result_inner is not None:
+                extracted_content = result_inner.strip()
 
             if extracted_content:
                 content = extracted_content
         else:
             # Remove other tool usage blocks (when tools are disabled but Claude tries to use them)
-            tool_patterns = [
-                r"<read_file>.*?</read_file>",
-                r"<write_file>.*?</write_file>",
-                r"<bash>.*?</bash>",
-                r"<search_files>.*?</search_files>",
-                r"<str_replace_editor>.*?</str_replace_editor>",
-                r"<args>.*?</args>",
-                r"<ask_followup_question>.*?</ask_followup_question>",
-                r"<attempt_completion>.*?</attempt_completion>",
-                r"<question>.*?</question>",
-                r"<follow_up>.*?</follow_up>",
-                r"<suggest>.*?</suggest>",
-            ]
+            for tag in _TOOL_TAGS:
+                content = _strip_tag_blocks(content, tag)
 
-            for pattern in tool_patterns:
-                content = re.sub(pattern, "", content, flags=re.DOTALL)
-
-        # Pattern to match image references or base64 data
-        image_pattern = r"\[Image:.*?\]|data:image/.*?;base64,.*?(?=\s|$)"
-
-        def replace_image(match):
-            return "[Image: Content not supported by Claude Code]"
-
-        content = re.sub(image_pattern, replace_image, content)
+        content = _IMAGE_RE.sub("[Image: Content not supported by Claude Code]", content)
 
         # Clean up extra whitespace and newlines
-        content = re.sub(r"\n\s*\n\s*\n", "\n\n", content)  # Multiple newlines to double
+        content = _MULTI_NEWLINE_RE.sub("\n\n", content)
         content = content.strip()
 
         # If content is now empty or only whitespace, provide a fallback

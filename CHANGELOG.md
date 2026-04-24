@@ -5,6 +5,57 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.1] - 2026-04-24
+
+### Security
+
+Closes the ten CodeQL code-scanning alerts open on `main`.
+
+- **Workflow: `claude-code-review.yml` removed** (alert #1,
+  `actions/untrusted-checkout/high`). The file checked out
+  `pull_request.head.sha` inside a `pull_request_target` job, exposing
+  repo secrets to untrusted code. Deleted entirely; automated PR review
+  can be reintroduced later behind a non-privileged trigger.
+- **Workflow: `ci.yml` permissions pinned** (alert #2,
+  `actions/missing-workflow-permissions`). Added top-level
+  `permissions: {contents: read}`.
+- **Error responses no longer leak exception detail** (alerts #7-#10,
+  `py/stack-trace-exposure`). `str(e)` has been replaced with static,
+  client-safe strings in:
+  - `_build_assistant_error_response` (new `_safe_assistant_error_message`
+    helper keyed on the upstream subtype);
+  - the `generate_streaming_response` SSE error chunk;
+  - the chat-completions and Anthropic-messages 500 HTTPException
+    handlers;
+  - `/v1/debug/request`, which is now entirely gated behind
+    `DEBUG_MODE`/`VERBOSE` and emits only the exception *type name* when
+    enabled. All server-side logging of the full exception is preserved.
+- **`MessageAdapter.filter_content` regexes hardened against
+  polynomial ReDoS** (alerts #3-#6, `py/polynomial-redos`). The lazy
+  `<tag>.*?</tag>` patterns were rewritten to the non-backtracking
+  `<tag>[^<]*(?:<(?!/tag>)[^<]*)*</tag>` form and pre-compiled at module
+  scope. The image-reference pattern now uses fixed upper bounds
+  (`[^\]]{0,1024}` / `[^\s]{0,65536}`) instead of lazy quantifiers with
+  a lookahead. A 1 MB input length guard short-circuits
+  `filter_content` on pathological payloads.
+
+### Tests
+
+- New `tests/test_redos_safety.py`: six pathological inputs that the
+  pre-fix regexes would have spent seconds-to-minutes on each complete
+  in under 1 s. Plus behavioural regression tests asserting the
+  rewritten patterns still strip `<thinking>`, extract nested
+  `<attempt_completion>`/`<result>`, replace image tokens, and return
+  oversized input unchanged.
+
+### Notes
+
+- Client-visible error message text has changed (now generic strings
+  like "Chat completion failed"). The OpenAI-style `type` and `code`
+  fields are unchanged, so programmatic error routing is unaffected.
+- `/v1/debug/request` returns `{"debug_info": {"enabled": false, ...}}`
+  unless `DEBUG_MODE=true` or `VERBOSE=true` is set on the server.
+
 ## [2.9.0] - 2026-04-23
 
 ### Changed

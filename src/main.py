@@ -611,6 +611,20 @@ _ASSISTANT_ERROR_STATUS = {
     "assistant_unknown": 502,
 }
 
+_ASSISTANT_ERROR_MESSAGE = {
+    "assistant_rate_limit": "Upstream rate limit exceeded",
+    "assistant_billing_error": "Upstream billing error",
+    "assistant_authentication_failed": "Upstream authentication failed",
+    "assistant_invalid_request": "Upstream rejected the request as invalid",
+    "assistant_server_error": "Upstream server error",
+    "assistant_unknown": "Upstream request failed",
+}
+
+
+def _safe_assistant_error_message(subtype: Optional[str]) -> str:
+    """Return a client-safe message that does not leak exception detail."""
+    return _ASSISTANT_ERROR_MESSAGE.get(subtype or "", "Upstream request failed")
+
 
 def _build_assistant_error_response(
     request_id: str, model: str, err: ClaudeResultError
@@ -634,7 +648,7 @@ def _build_assistant_error_response(
         headers=headers,
         content={
             "error": {
-                "message": err.errors[0] if err.errors else str(err),
+                "message": _safe_assistant_error_message(err.subtype),
                 "type": "upstream_api_error",
                 "code": err.subtype or "unknown",
             }
@@ -1064,7 +1078,7 @@ async def generate_streaming_response(
 
     except Exception as e:
         logger.error(f"Streaming error: {e}")
-        error_chunk = {"error": {"message": str(e), "type": "streaming_error"}}
+        error_chunk = {"error": {"message": "Streaming failed", "type": "streaming_error"}}
         yield f"data: {json.dumps(error_chunk)}\n\n"
 
 
@@ -1348,7 +1362,7 @@ async def chat_completions(
     except Exception as e:
         sdk_circuit_breaker.record(success=False)
         logger.error(f"Chat completion error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Chat completion failed")
 
 
 @app.post("/v1/messages")
@@ -1468,7 +1482,7 @@ async def anthropic_messages(
         raise
     except Exception as e:
         logger.error(f"Anthropic Messages API error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Messages request failed")
 
 
 @app.get("/v1/models")
@@ -2353,7 +2367,19 @@ async def root():
 @app.post("/v1/debug/request")
 @rate_limit_endpoint("debug")
 async def debug_request_validation(request: Request):
-    """Debug endpoint to test request validation and see what's being sent."""
+    """Debug endpoint to test request validation and see what's being sent.
+
+    Returns a minimal response unless DEBUG_MODE or VERBOSE is enabled, so
+    that exception/request detail is never emitted to production clients.
+    """
+    if not (DEBUG_MODE or VERBOSE):
+        return {
+            "debug_info": {
+                "enabled": False,
+                "hint": "Set DEBUG_MODE=true or VERBOSE=true to enable this endpoint",
+            }
+        }
+
     try:
         # Get the raw request body
         body = await request.body()
@@ -2367,7 +2393,9 @@ async def debug_request_validation(request: Request):
 
             parsed_body = json_lib.loads(raw_body) if raw_body else {}
         except Exception as e:
-            json_error = str(e)
+            # Only expose the exception type, never its message/stack trace.
+            json_error = type(e).__name__
+            logger.warning(f"Debug endpoint JSON parse error: {e}")
 
         # Try to validate against our model
         validation_result = {"valid": False, "errors": []}
@@ -2408,10 +2436,11 @@ async def debug_request_validation(request: Request):
         }
 
     except Exception as e:
+        # Never echo str(e); log it server-side and return only the type.
+        logger.error(f"Debug endpoint error: {e}")
         return {
             "debug_info": {
-                "error": f"Debug endpoint error: {str(e)}",
-                "headers": dict(request.headers),
+                "error_type": type(e).__name__,
                 "method": request.method,
                 "url": str(request.url),
             }
