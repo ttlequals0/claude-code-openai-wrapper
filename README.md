@@ -4,36 +4,19 @@ OpenAI API-compatible wrapper for Claude Code. Drop it in front of any OpenAI cl
 
 ## Version
 
-**Current:** 2.7.0
+**Current:** 2.9.3
 
-What's new in 2.7.0:
-- Added Claude Opus 4.7 (`claude-opus-4-7`) as the new flagship model
-- Removed retired models: `claude-3-7-sonnet-20250219`, `claude-3-5-sonnet-20241022`, `claude-3-5-haiku-20241022`
-- Corrected context window to 1M for `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-4-6`
-- Corrected max output to 32K for `claude-opus-4-1-20250805` and `claude-opus-4-20250514`
-- Corrected max output to 64K for `claude-sonnet-4-6` (synchronous Messages API)
-- Synced `.env.example` `DEFAULT_MODEL` with code default (`claude-sonnet-4-6`)
+Highlights of recent releases (full history in [CHANGELOG.md](./CHANGELOG.md)):
 
-What's new in 2.6.0:
-- OpenAI function calling simulation (tools/tool_choice parameters)
-- JSON schema support in response_format
-- Real-time streaming fence stripping for JSON responses
-- CPU watchdog for Docker deployments
-
-What's new in 2.5.x:
-- Landing page redesigned with all endpoints grouped by category
-- Model list updated from open-sourced Claude Code source (11 models, per-model metadata and pricing)
-- 41 tools tracked, verified against Claude Code source
-- Cost tracking with authoritative per-model pricing
-- Retry logic with exponential backoff and model fallback
-- `X-Claude-Effort` and `X-Claude-Thinking` headers for fine-grained control
-- Model-specific `max_tokens` validation
-
-See [CHANGELOG.md](./CHANGELOG.md) for full history.
+- **2.9.x** - CodeQL hardening: sanitised error responses (no more `str(e)` to clients), `filter_content` rewrite against polynomial ReDoS, `/v1/debug/request` gated behind `DEBUG_MODE`/`VERBOSE`, workflow permissions pinned. Image trimmed to 775 MB (`poetry install --only main`, `.dockerignore`). `claude-agent-sdk` pinned to 0.1.65 with the `[otel]` extra.
+- **2.8.x** - Security dep bumps, breaker defaults loosened, CLI stderr capture, structured-log state unmasked.
+- **2.7.0** - Added `claude-opus-4-7`; retired `claude-3-*` family; corrected context-window and max-output metadata.
+- **2.6.0** - OpenAI function calling simulation (`tools` / `tool_choice`), JSON schema support in `response_format`, real-time streaming fence stripping, CPU watchdog.
+- **2.5.x** - Landing-page redesign, model catalogue from the open-sourced Claude Code source, 41 tools tracked, retry + model fallback, cost tracking, `X-Claude-Effort` / `X-Claude-Thinking` headers.
 
 ## Status
 
-Production ready. 566 tests passing. Streaming works. Sessions work. JSON mode works. Tools are off by default for speed -- pass `enable_tools: true` to turn them on. Auth supports API key, Bedrock, Vertex AI, and CLI.
+Production ready. **650 tests passing (31 skipped)**. Streaming works. Sessions work. JSON mode works. Function calling works. Tools are off by default for speed - pass `enable_tools: true` to turn them on. Auth supports API key, Bedrock, Vertex AI, and CLI.
 
 ## Quick Start
 
@@ -76,7 +59,7 @@ The Claude Code CLI comes bundled with the SDK. No Node.js or npm needed.
 git clone https://github.com/ttlequals0/claude-code-openai-wrapper
 cd claude-code-openai-wrapper
 poetry install
-cp .env.example .env  # Edit with your preferences
+cp .env.example .env  # edit with your preferences
 ```
 
 ## Configuration
@@ -106,16 +89,18 @@ If no `API_KEY` is set, the server prompts on startup whether to generate one. U
 
 ### Rate Limiting
 
-Per-IP rate limiting is built in. Defaults:
+Per-IP rate limiting is on by default. Per-endpoint defaults and the env vars that override them:
 
-| Endpoint | Limit |
-|----------|-------|
-| `/v1/chat/completions` | 10/min |
-| `/v1/debug/request` | 2/min |
-| `/v1/auth/status` | 10/min |
-| `/health` | 30/min |
+| Endpoint group | Default | Env var |
+|----------------|---------|---------|
+| `/v1/chat/completions`, `/v1/messages` | 10/min | `RATE_LIMIT_CHAT_PER_MINUTE` |
+| `/v1/debug/request` | 2/min | `RATE_LIMIT_DEBUG_PER_MINUTE` |
+| `/v1/auth/status` | 10/min | `RATE_LIMIT_AUTH_PER_MINUTE` |
+| `/v1/sessions/*` | 15/min | `RATE_LIMIT_SESSION_PER_MINUTE` |
+| `/health`, `/healthz/deep` | 30/min | `RATE_LIMIT_HEALTH_PER_MINUTE` |
+| everything else | 30/min | `RATE_LIMIT_PER_MINUTE` |
 
-Override with env vars: `RATE_LIMIT_ENABLED`, `RATE_LIMIT_CHAT_PER_MINUTE`, etc.
+Disable entirely with `RATE_LIMIT_ENABLED=false`.
 
 ## Running the Server
 
@@ -129,7 +114,7 @@ poetry run claude-wrapper
 
 ## Docker
 
-Pre-built image on Docker Hub: `ttlequals0/claude-code-openai-wrapper`
+Pre-built image on Docker Hub: `ttlequals0/claude-code-openai-wrapper`.
 
 ```bash
 # Pull and run
@@ -138,24 +123,28 @@ docker run -d -p 8000:8000 \
   --name claude-wrapper \
   ttlequals0/claude-code-openai-wrapper:latest
 
-# With custom workspace
+# Pin to a specific version
 docker run -d -p 8000:8000 \
   -v ~/.claude:/root/.claude \
-  -v /path/to/project:/workspace \
-  -e CLAUDE_CWD=/workspace \
-  ttlequals0/claude-code-openai-wrapper:2.6.0
+  --name claude-wrapper \
+  ttlequals0/claude-code-openai-wrapper:2.9.3
 
-# Or build locally
-docker build -t claude-wrapper:latest .
+# Or build locally (prod stage is the default target)
+docker build --platform linux/amd64 -t claude-wrapper:local .
 ```
 
-Docker Compose:
+Docker Compose (matches `docker-compose.yml` in the repo):
 
 ```yaml
 version: '3.8'
 services:
   claude-wrapper:
     image: ttlequals0/claude-code-openai-wrapper:latest
+    pull_policy: always   # redeploy webhooks re-pull :latest
+    build:
+      context: .
+      target: prod
+    container_name: claude-wrapper
     ports:
       - "8000:8000"
     volumes:
@@ -164,19 +153,45 @@ services:
       - PORT=8000
       - MAX_TIMEOUT=600000
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 ```
+
+### Environment variables
+
+Listed in roughly the order you will reach for them.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PORT` | Server port | `8000` |
-| `MAX_TIMEOUT` | Request timeout (ms) | `600000` (10 min) |
-| `CLAUDE_CWD` | Working directory | temp dir |
+| `CLAUDE_WRAPPER_HOST` | Bind address (`127.0.0.1` for local-only, `0.0.0.0` for all) | `0.0.0.0` |
+| `MAX_TIMEOUT` | Per-request timeout (ms) | `600000` (10 min) |
+| `MAX_REQUEST_SIZE` | Max request body size (bytes) | `10485760` (10 MB) |
+| `CLAUDE_CWD` | Working directory Claude Code runs in | isolated temp dir |
 | `CLAUDE_AUTH_METHOD` | `cli`, `api_key`, `bedrock`, `vertex` | auto-detect |
-| `ANTHROPIC_API_KEY` | Direct API key | - |
-| `DEBUG_MODE` | Enable debug logging | `false` |
+| `API_KEY` | Require this key on every request; prompts at startup if unset | interactive prompt |
+| `ANTHROPIC_API_KEY` | Direct API key (for `api_key` auth) | - |
+| `CLAUDE_CODE_USE_BEDROCK` | Enable AWS Bedrock backend | `false` |
+| `AWS_REGION` / `AWS_DEFAULT_REGION` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Bedrock credentials | - |
+| `CLAUDE_CODE_USE_VERTEX` | Enable Google Vertex AI backend | `false` |
+| `ANTHROPIC_VERTEX_PROJECT_ID` / `CLOUD_ML_REGION` / `GOOGLE_APPLICATION_CREDENTIALS` | Vertex credentials | - |
+| `DEFAULT_MODEL` | Default model id when request omits one | `claude-sonnet-4-6` |
+| `DEBUG_MODE` | Enable debug logging and unlock `/v1/debug/request` | `false` |
+| `VERBOSE` | Same unlock effect on `/v1/debug/request` | `false` |
 | `CORS_ORIGINS` | Allowed CORS origins (JSON array) | `["*"]` |
-| `REQUEST_CACHE_ENABLED` | Enable request dedup cache | `false` |
-| `DEFAULT_MODEL` | Override default model | `claude-sonnet-4-6` |
+| `REQUEST_CACHE_ENABLED` | Enable request-dedup cache | `false` |
+| `REQUEST_CACHE_TTL_SECONDS` | Cache entry TTL | service-managed |
+| `REQUEST_CACHE_MAX_SIZE` | Max cached entries | service-managed |
+| `WRAPPER_DEFAULT_MAX_TURNS` | Default `max_turns` when caller does not enable tools | `3` |
+| `WRAPPER_MAP_MAX_TOKENS_TO_THINKING` | Map OpenAI `max_tokens` to Claude `max_thinking_tokens` (legacy) | `false` |
+| `WATCHDOG_ENABLED` | Enable CPU watchdog (for Docker) | `true` |
+| `WATCHDOG_CPU_THRESHOLD` / `WATCHDOG_INTERVAL` / `WATCHDOG_STRIKES` | Watchdog tuning | see `src/cpu_watchdog.py` |
+| `UVICORN_WORKERS` | Worker count for the prod image | `2` |
+| `RATE_LIMIT_ENABLED` / `RATE_LIMIT_*_PER_MINUTE` | See rate-limit section above | - |
 
 ## Usage Examples
 
@@ -245,10 +260,11 @@ Claude-specific options via HTTP headers:
 | `X-Claude-Effort` | `low`, `medium`, `high`, `max` | Model effort level |
 | `X-Claude-Thinking` | `adaptive`, `enabled`, `disabled` | Extended thinking mode |
 | `X-Claude-Max-Thinking-Tokens` | integer | Thinking token budget |
+| `X-Enable-Cache` | `true` / `1` / `yes` | Opt in to response cache on this request |
 
 ## Supported Models
 
-Model IDs, context windows, and pricing are sourced from the Anthropic models docs (`platform.claude.com/docs/en/about-claude/models/overview`).
+Model IDs, context windows, and pricing are sourced from the Anthropic models docs (`platform.claude.com/docs/en/about-claude/models/overview`) and mirrored in `src/constants.py`.
 
 ### Latest
 | Model | Context | Max Output | Input $/MTok | Output $/MTok |
@@ -283,7 +299,7 @@ response1 = client.chat.completions.create(
     extra_body={"session_id": "my-session"}
 )
 
-# Continue it -- Claude remembers the context
+# Continue it - Claude remembers the context
 response2 = client.chat.completions.create(
     model="claude-sonnet-4-6",
     messages=[{"role": "user", "content": "What's my name?"}],
@@ -292,10 +308,10 @@ response2 = client.chat.completions.create(
 ```
 
 Sessions expire after 1 hour of inactivity. Management endpoints:
-- `GET /v1/sessions` -- list active sessions
-- `GET /v1/sessions/{id}` -- session details
-- `DELETE /v1/sessions/{id}` -- delete session
-- `GET /v1/sessions/stats` -- session statistics
+- `GET /v1/sessions` - list active sessions
+- `GET /v1/sessions/{id}` - session details
+- `DELETE /v1/sessions/{id}` - delete session
+- `GET /v1/sessions/stats` - session statistics
 
 ## API Endpoints
 
@@ -311,7 +327,7 @@ Sessions expire after 1 hour of inactivity. Management endpoints:
 |----------|--------|-------------|
 | `/v1/models` | GET | List available models |
 | `/v1/models/status` | GET | Model service status |
-| `/v1/models/refresh` | POST | Refresh models from API |
+| `/v1/models/refresh` | POST | Refresh model catalogue |
 
 ### Sessions
 | Endpoint | Method | Description |
@@ -345,9 +361,10 @@ Sessions expire after 1 hour of inactivity. Management endpoints:
 | `/v1/cache/clear` | POST | Clear request cache |
 | `/v1/auth/status` | GET | Auth status |
 | `/v1/compatibility` | POST | Parameter compatibility check |
-| `/v1/debug/request` | POST | Debug request validation |
-| `/health` | GET | Health check |
-| `/version` | GET | API version |
+| `/v1/debug/request` | POST | Request debugging; **emits only `{"enabled": false}` unless `DEBUG_MODE` or `VERBOSE` is set** |
+| `/health` | GET | Liveness probe (no upstream call) |
+| `/healthz/deep` | GET | Deep readiness probe (performs an SDK round-trip) |
+| `/version` | GET | Wrapper version |
 
 ## Function Calling
 
@@ -380,7 +397,7 @@ if response.choices[0].finish_reason == "tool_calls":
 
 Supports `tool_choice`: `"auto"` (default), `"required"`, `"none"`, or `{"type": "function", "function": {"name": "..."}}`.
 
-Multi-turn tool conversations work -- pass assistant messages with `tool_calls` and `tool` role result messages back. The wrapper converts them to text for Claude.
+Multi-turn tool conversations work - pass assistant messages with `tool_calls` and `tool` role result messages back. The wrapper converts them to text for Claude.
 
 ## JSON Response Mode
 
@@ -394,20 +411,19 @@ response = client.chat.completions.create(
 )
 ```
 
-With `json_object` mode, the wrapper adds system prompt instructions for JSON output, strips preambles like "Here is the JSON:", and uses brace-matching extraction as a fallback. Works streaming and non-streaming.
+With `json_object` mode, the wrapper adds system prompt instructions for JSON output, strips preambles like "Here is the JSON:", and uses brace-matching extraction as a fallback. Works streaming and non-streaming. JSON schema is also accepted via `response_format={"type": "json_schema", "json_schema": {...}}`.
 
 ## Limitations
 
-- Images in messages are converted to text placeholders
-- OpenAI-style function calling not supported (tools auto-execute based on prompts)
-- `temperature` and `top_p` are applied via system prompt instructions (best-effort approximation, not native SDK parameters)
-- `presence_penalty` and `frequency_penalty` are accepted but ignored
-- Multiple responses (`n > 1`) not supported
+- Images in messages are converted to text placeholders.
+- `temperature` and `top_p` are applied via system-prompt instructions (best-effort approximation, not native SDK parameters).
+- `presence_penalty` and `frequency_penalty` are accepted but ignored.
+- Multiple responses (`n > 1`) are not supported.
 
 ## Testing
 
 ```bash
-# Run the full test suite
+# Run the full test suite (650 tests, ~3 s on a laptop)
 poetry run pytest tests/
 
 # Quick endpoint test (server must be running)
@@ -416,10 +432,10 @@ poetry run python tests/test_endpoints.py
 
 ## Terms
 
-You need your own Claude subscription or API access. This wrapper translates request formats -- it does not provide Claude access.
+You need your own Claude subscription or API access. This wrapper translates request formats - it does not provide Claude access.
 
 | Use Case | Recommended Auth |
-|----------|-----------------|
+|----------|------------------|
 | Personal projects | CLI Auth or API Key |
 | Business / commercial | API Key, Bedrock, or Vertex AI |
 | High-scale | Bedrock or Vertex AI |
