@@ -5,7 +5,15 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.9.5] - 2026-04-27
+
+### Changed
+
+- `claude-agent-sdk`: 0.1.65 -> 0.1.68. The SDK now declares
+  `sniffio >= 1.0.0` as a direct runtime dependency; lock file
+  picks up `sniffio 1.3.1` accordingly. Pin keeps the `[otel]`
+  extra (the SDK still imports `opentelemetry.propagate`
+  unconditionally).
 
 ### CI
 
@@ -16,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `::warning::` annotation; the summary block on the run page
   carries the version delta and remediation notes. Dropped the
   unused `issues: write` permission.
+
+### Tests
+
+Full suite stays at 650 passed, 31 skipped.
 
 ## [2.9.4] - 2026-04-24
 
