@@ -5,6 +5,18 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### CI
+
+- `check-sdk-version.yml`: replaced the issue-creation step with a
+  `GITHUB_STEP_SUMMARY` write. The repo has issues disabled, which
+  caused the weekly job to fail at `gh issue create` once the pin
+  fell behind PyPI. Drift is still announced via the existing
+  `::warning::` annotation; the summary block on the run page
+  carries the version delta and remediation notes. Dropped the
+  unused `issues: write` permission.
+
 ## [2.9.4] - 2026-04-24
 
 ### Security
