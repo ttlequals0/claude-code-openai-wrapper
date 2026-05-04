@@ -174,12 +174,17 @@ Listed in roughly the order you will reach for them.
 | `CLAUDE_CWD` | Working directory Claude Code runs in | isolated temp dir |
 | `CLAUDE_AUTH_METHOD` | `cli`, `api_key`, `bedrock`, `vertex` | auto-detect |
 | `API_KEY` | Require this key on every request; prompts at startup if unset | interactive prompt |
-| `ANTHROPIC_API_KEY` | Direct API key (for `api_key` auth) | - |
+| `ANTHROPIC_API_KEY` | Direct API key (for `api_key` auth). Optional — also unlocks live `/v1/models` discovery and dynamic latest-Sonnet default. | - |
 | `CLAUDE_CODE_USE_BEDROCK` | Enable AWS Bedrock backend | `false` |
 | `AWS_REGION` / `AWS_DEFAULT_REGION` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Bedrock credentials | - |
 | `CLAUDE_CODE_USE_VERTEX` | Enable Google Vertex AI backend | `false` |
 | `ANTHROPIC_VERTEX_PROJECT_ID` / `CLOUD_ML_REGION` / `GOOGLE_APPLICATION_CREDENTIALS` | Vertex credentials | - |
-| `DEFAULT_MODEL` | Default model id when request omits one | `claude-sonnet-4-6` |
+| `DEFAULT_MODEL` | Default model id when request omits one. When unset and `ANTHROPIC_API_KEY` is configured, the wrapper resolves the latest Sonnet at startup; otherwise falls back to `claude-sonnet-4-6`. | auto |
+| `FAST_MODEL` | Speed/cost-optimized model alias used internally. | `claude-haiku-4-5-20251001` |
+| `CLAUDE_MODELS_OVERRIDE` | Comma-separated model IDs to advertise via `/v1/models`. Takes precedence over both live and static lists. | - |
+| `MODEL_LIST_CACHE_TTL_SECONDS` | Cache TTL for live `/v1/models` results. | `3600` |
+| `MODEL_LIST_ERROR_TTL_SECONDS` | Short cache TTL applied when the live fetch fails so transient outages don't suppress live discovery for the full hour. | `60` |
+| `MODEL_LIST_REQUEST_TIMEOUT_SECONDS` | HTTP timeout for the live model fetch (seconds). | `5` |
 | `DEBUG_MODE` | Enable debug logging and unlock `/v1/debug/request` | `false` |
 | `VERBOSE` | Same unlock effect on `/v1/debug/request` | `false` |
 | `CORS_ORIGINS` | Allowed CORS origins (JSON array) | `["*"]` |
@@ -206,6 +211,19 @@ curl -X POST http://localhost:8000/v1/chat/completions \
       {"role": "user", "content": "What is 2 + 2?"}
     ]
   }'
+
+# With API key protection (when enabled)
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-generated-api-key" \
+  -d '{
+    "model": "claude-sonnet-4-6",
+    "messages": [
+      {"role": "user", "content": "Write a Python hello world script"}
+    ],
+    "stream": true
+  }'
+
 ```
 
 ### OpenAI Python SDK
@@ -266,6 +284,8 @@ Claude-specific options via HTTP headers:
 
 Model IDs, context windows, and pricing are sourced from the Anthropic models docs (`platform.claude.com/docs/en/about-claude/models/overview`) and mirrored in `src/constants.py`.
 
+When `ANTHROPIC_API_KEY` is set, `/v1/models` returns Anthropic's live model list (cached per `MODEL_LIST_CACHE_TTL_SECONDS`, default 1 hour) and the wrapper resolves the latest Sonnet as `DEFAULT_MODEL` at startup. When the key is absent (e.g., Bedrock, Vertex, or Claude CLI subscription auth) the static list below is served and `claude-sonnet-4-6` is used as the fallback default. Set `CLAUDE_MODELS_OVERRIDE` to pin the advertised list regardless of auth.
+
 ### Latest
 | Model | Context | Max Output | Input $/MTok | Output $/MTok |
 |-------|---------|-----------|-------------|--------------|
@@ -286,6 +306,8 @@ Model IDs, context windows, and pricing are sourced from the Anthropic models do
 |-------|---------|-----------|-------------|--------------|-------------|
 | `claude-sonnet-4-20250514` | 200K | 64K | $3 | $15 | `claude-sonnet-4-6` |
 | `claude-opus-4-20250514` | 200K | 32K | $15 | $75 | `claude-opus-4-7` |
+
+**Note:** Claude 3.x models are not supported by the Claude Agent SDK.
 
 ## Session Continuity
 
@@ -312,6 +334,8 @@ Sessions expire after 1 hour of inactivity. Management endpoints:
 - `GET /v1/sessions/{id}` - session details
 - `DELETE /v1/sessions/{id}` - delete session
 - `GET /v1/sessions/stats` - session statistics
+
+See `examples/session_continuity.py` for Python and curl examples.
 
 ## API Endpoints
 
