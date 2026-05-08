@@ -18,7 +18,7 @@ pydantic = "^2.10.0"
 python-dotenv = "^1.2.2"
 httpx = "^0.27.2"
 sse-starlette = "^2.1.3"
-python-multipart = "^0.0.26"
+python-multipart = ">=0.0.26,<0.0.28"
 # Pin the SDK exactly. Bump deliberately and regenerate poetry.lock in the
 # same commit so Docker builds stay reproducible. 2.9.0 bump from 0.1.18 to
 # 0.1.65 to pull in 47 patch releases worth of CLI fixes aimed at the
