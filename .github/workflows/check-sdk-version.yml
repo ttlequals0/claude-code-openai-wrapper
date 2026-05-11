@@ -2,16 +2,20 @@ name: Check claude-agent-sdk version
 
 # Belt-and-suspenders on top of Dependabot: every Monday, fetch the
 # latest claude-agent-sdk release from PyPI and compare to the pin in
-# pyproject.toml. If we are behind, emit a warning annotation and
-# write the drift to the run's job summary. Also runnable manually.
+# pyproject.toml. If we are behind, open a draft PR with the pin bump
+# and regenerated poetry.lock so a human reviewer just adds the version
+# bump + CHANGELOG entry before merging. Also runnable manually.
 #
-# Issues are disabled on this repo, so we surface drift via the
-# Actions run page rather than the Issues tab. Dependabot already
-# opens PRs for SDK bumps; this workflow's job is just to make sure
-# the drift doesn't go unnoticed if Dependabot misses it.
+# Idempotent: skips PR creation when an open PR for that head branch
+# already exists. Job summary fallback runs unconditionally on drift
+# so the run page always carries the version delta even if PR creation
+# can't run (existing PR, branch conflict, etc.).
 #
-# Only event sources are schedule + workflow_dispatch; no user-
-# controlled event payload is interpolated into run blocks.
+# Workflow injection notes: schedule + workflow_dispatch are the only
+# event sources, so no user-controlled event payload is involved. The
+# values flowing into run blocks (pinned, latest, branch) are derived
+# from pyproject.toml and pypi.org JSON, and are passed via env: so
+# they never reach the shell via ${{ }} expression interpolation.
 
 on:
   schedule:
@@ -19,19 +23,18 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
 
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
       - name: Compare pinned SDK vs latest PyPI release
         id: compare
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -57,11 +60,103 @@ jobs:
             echo "::warning::claude-agent-sdk pin ($pinned) is behind latest PyPI release ($latest)."
           fi
 
-      - name: Write drift summary when behind
+      - name: Set up Python
+        if: steps.compare.outputs.up_to_date == 'false'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        if: steps.compare.outputs.up_to_date == 'false'
+        run: pipx install poetry==2.3.4
+
+      - name: Check for existing bump PR
+        id: existing
+        if: steps.compare.outputs.up_to_date == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST: ${{ steps.compare.outputs.latest }}
+        run: |
+          set -euo pipefail
+          branch="chore/sdk-bump-${LATEST}"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          if [ -n "$(gh pr list --state open --head "$branch" --json number --jq '.[0].number')" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "An open PR already exists for $branch; skipping create step."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump pin, regenerate lock, and open draft PR
+        if: steps.compare.outputs.up_to_date == 'false' && steps.existing.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PINNED: ${{ steps.compare.outputs.pinned }}
+          LATEST: ${{ steps.compare.outputs.latest }}
+          BRANCH: ${{ steps.existing.outputs.branch }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+
+          python3 - <<'PY'
+          import os, pathlib, re
+          latest = os.environ["LATEST"]
+          path = pathlib.Path("pyproject.toml")
+          text = path.read_text()
+          # Prefer the table form first (which carries the [otel] extras).
+          table_pat = re.compile(
+              r'(claude-agent-sdk\s*=\s*\{[^}]*version\s*=\s*")[^"]+(")'
+          )
+          new_text, n = table_pat.subn(r'\g<1>' + latest + r'\g<2>', text, count=1)
+          if n == 0:
+              # Fall back to the plain-string form.
+              string_pat = re.compile(r'(claude-agent-sdk\s*=\s*")[^"]+(")')
+              new_text, n = string_pat.subn(r'\g<1>' + latest + r'\g<2>', text, count=1)
+          if n == 0:
+              raise SystemExit("Failed to update claude-agent-sdk pin in pyproject.toml")
+          path.write_text(new_text)
+          PY
+
+          poetry lock --no-interaction
+
+          git add pyproject.toml poetry.lock
+          git commit -m "chore(deps): bump claude-agent-sdk $PINNED -> $LATEST"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --draft \
+            --base main \
+            --head "$BRANCH" \
+            --title "chore(deps): bump claude-agent-sdk $PINNED -> $LATEST" \
+            --body "Automated bump opened by the \`Check claude-agent-sdk version\` workflow.
+
+          Bumps the SDK pin in \`pyproject.toml\` from \`$PINNED\` to \`$LATEST\` and regenerates \`poetry.lock\`. Scope is deliberately limited to the pin + lock so the human reviewer owns the release coordination.
+
+          References:
+          - Release notes: https://github.com/anthropics/claude-agent-sdk-python/releases/tag/v$LATEST
+          - Full changelog: https://github.com/anthropics/claude-agent-sdk-python/compare/v$PINNED...v$LATEST
+          - PyPI: https://pypi.org/project/claude-agent-sdk/$LATEST/
+
+          Reviewer checklist before merging:
+
+          - [ ] Bump version in \`pyproject.toml\` \`[tool.poetry] version\` and \`src/__init__.py\`
+          - [ ] Add a new \`## [x.y.z]\` section to \`CHANGELOG.md\` describing this bump
+          - [ ] Confirm the \`[otel]\` extra is still present on the pin (the SDK unconditionally imports \`opentelemetry.propagate\`)
+          - [ ] Push an empty commit (\`git commit --allow-empty\`) so the test matrix fires: PRs opened with the default \`GITHUB_TOKEN\` do not trigger downstream \`pull_request\` workflow runs by design
+          - [ ] Confirm all CI checks pass
+
+          Mark the PR ready for review once the items above are in place."
+
+      - name: Write drift summary
         if: steps.compare.outputs.up_to_date == 'false'
         env:
           PINNED: ${{ steps.compare.outputs.pinned }}
           LATEST: ${{ steps.compare.outputs.latest }}
+          BRANCH: ${{ steps.existing.outputs.branch }}
+          PR_EXISTS: ${{ steps.existing.outputs.exists }}
         run: |
           set -euo pipefail
           {
@@ -72,9 +167,15 @@ jobs:
             echo "| Pinned | \`$PINNED\` |"
             echo "| Latest on PyPI | \`$LATEST\` |"
             echo
+            if [ "$PR_EXISTS" = "true" ]; then
+              echo "An open PR for branch \`$BRANCH\` already exists; no new PR was opened."
+            else
+              echo "Opened draft PR on branch \`$BRANCH\`."
+            fi
+            echo
             echo "Release notes: https://github.com/anthropics/claude-agent-sdk-python/releases/tag/v$LATEST"
             echo "Full changelog: https://github.com/anthropics/claude-agent-sdk-python/compare/v$PINNED...v$LATEST"
             echo "PyPI: https://pypi.org/project/claude-agent-sdk/$LATEST/"
             echo
-            echo "Review the release notes, run \`poetry lock\` after bumping the pin, and verify the full test suite before merging. The SDK unconditionally imports \`opentelemetry.propagate\`, so keep the \`[otel]\` extra on the pin."
+            echo "The SDK unconditionally imports \`opentelemetry.propagate\`, so keep the \`[otel]\` extra on the pin."
           } >> "$GITHUB_STEP_SUMMARY"

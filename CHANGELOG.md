@@ -5,6 +5,59 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.6] - 2026-05-11
+
+### Changed
+
+- `claude-agent-sdk`: 0.1.68 -> 0.1.81. Thirteen patch releases since
+  the v2.9.5 cut. Pin keeps the `[otel]` extra (the SDK still imports
+  `opentelemetry.propagate` unconditionally).
+- Sync upstream `RichardAtCT/claude-code-openai-wrapper#46`: dynamic
+  Anthropic Models API integration for `/v1/models`. When
+  `ANTHROPIC_API_KEY` is set the endpoint returns Anthropic's live
+  model list (cached `MODEL_LIST_CACHE_TTL_SECONDS`, default 3600s)
+  and the wrapper resolves the latest Sonnet as `DEFAULT_MODEL` at
+  startup. When the key is absent (Bedrock, Vertex, Claude CLI
+  subscription auth) the existing static catalog is served and
+  `DEFAULT_MODEL_FALLBACK=claude-sonnet-4-6` is used.
+  `CLAUDE_MODELS_OVERRIDE` pins the advertised list regardless of
+  auth. Concurrent cache refreshes are serialized via an async lock +
+  double-check pattern; failed fetches use a short
+  `MODEL_LIST_ERROR_TTL_SECONDS` (default 60s) to keep transient
+  outages from suppressing live discovery for a full hour. The
+  pre-existing `model_service` (used by `/v1/models/refresh` and
+  `/v1/models/status`) is left in place alongside the new in-line
+  cache.
+
+### Security
+
+- `python-multipart`: ^0.0.26 -> ^0.0.27 (closes Dependabot alert #8,
+  `GHSA-pp6c-gr5w-3c5g` Denial of Service via unbounded multipart
+  part headers). Supersedes Dependabot PR #16, which was opened with
+  a Poetry 2.2.1 lockfile that would have introduced cosmetic
+  regressions in the lock header and constraint formatting.
+- `urllib3` security floor: >=2.6.3 -> >=2.7.0 (closes Dependabot
+  alerts #9 `GHSA-mf9v-mfxr-j63j` decompression-bomb safeguard
+  bypass and #10 `GHSA-qccp-gfcp-xxvc` proxy redirect header leak).
+
+### CI
+
+- `check-sdk-version.yml`: when drift is detected the workflow now
+  opens a draft `chore/sdk-bump-<latest>` PR with the pin bump and
+  regenerated `poetry.lock` instead of only writing to the run
+  summary. The Monday cron pre-stages the upgrade; a human reviewer
+  bumps the project version, adds a CHANGELOG entry, and merges. The
+  existing `::warning::` annotation and `$GITHUB_STEP_SUMMARY` block
+  still fire as a fallback when PR creation can't run (existing
+  open PR for that pin, branch conflict, etc.). Idempotent by head
+  branch name. Permissions widened to `contents: write` and
+  `pull-requests: write`.
+
+### Tests
+
+Full suite at 664 passed, 31 skipped (+14 from the upstream
+`test_dynamic_models.py` suite added by PR #46).
+
 ## [2.9.5] - 2026-04-27
 
 ### Changed
