@@ -25,6 +25,7 @@ Note:
 """
 
 import os
+from typing import Optional
 
 # Claude Code tool inventory (sourced from open-sourced Claude Code CLI)
 CLAUDE_TOOLS = [
@@ -116,7 +117,11 @@ _MODEL_OVERRIDES = {
     "claude-opus-4-20250514": {"default_max_output": 32_000, "max_output_limit": 32_000},
 }
 
-# All supported model IDs (order: newest first)
+# Static fallback list (order: newest first). Exposed by /v1/models and
+# accepted by validation when the live Anthropic Models API is unavailable
+# or not configured. Operators can override the advertised list without
+# rebuilding the image via CLAUDE_MODELS_OVERRIDE=model-a,model-b.
+# NOTE: Claude Agent SDK only supports Claude 4+ models, not Claude 3.x.
 _ALL_MODEL_IDS = [
     "claude-opus-4-7",
     "claude-opus-4-6",
@@ -134,11 +139,39 @@ MODEL_METADATA = {
     for model_id in _ALL_MODEL_IDS
 }
 
-# Derived from MODEL_METADATA so they can't drift out of sync
-CLAUDE_MODELS = list(MODEL_METADATA.keys())
+# CLAUDE_MODELS is derived from MODEL_METADATA so the metadata table is the
+# single source of truth; CLAUDE_MODELS_OVERRIDE replaces the advertised list
+# without touching the metadata catalog (validation still consults the catalog).
+DEFAULT_CLAUDE_MODELS = list(MODEL_METADATA.keys())
+_models_override = os.getenv("CLAUDE_MODELS_OVERRIDE", "").strip()
+CLAUDE_MODELS = (
+    [model.strip() for model in _models_override.split(",") if model.strip()]
+    if _models_override
+    else DEFAULT_CLAUDE_MODELS
+)
 
-DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "claude-sonnet-4-6")
-FAST_MODEL = "claude-haiku-4-5-20251001"
+# Default model selection.
+# DEFAULT_MODEL_ENV is the explicit operator override; when unset, the wrapper
+# resolves the latest Sonnet from Anthropic's live Models API at startup and
+# stores it in RESOLVED_DEFAULT_MODEL. DEFAULT_MODEL_FALLBACK is used until/if
+# that resolution succeeds.
+DEFAULT_MODEL_ENV: Optional[str] = os.getenv("DEFAULT_MODEL")
+DEFAULT_MODEL_FALLBACK = "claude-sonnet-4-6"
+DEFAULT_MODEL = DEFAULT_MODEL_ENV or DEFAULT_MODEL_FALLBACK
+RESOLVED_DEFAULT_MODEL: Optional[str] = None
+
+# Fast model (for speed/cost optimization).
+# Can be overridden via FAST_MODEL environment variable.
+FAST_MODEL = os.getenv("FAST_MODEL", "claude-haiku-4-5-20251001")
+
+# Anthropic Models API configuration for dynamically refreshing /v1/models.
+ANTHROPIC_MODELS_URL = os.getenv("ANTHROPIC_MODELS_URL", "https://api.anthropic.com/v1/models")
+ANTHROPIC_VERSION = os.getenv("ANTHROPIC_VERSION", "2023-06-01")
+MODEL_LIST_CACHE_TTL_SECONDS = int(os.getenv("MODEL_LIST_CACHE_TTL_SECONDS", "3600"))
+# Shorter TTL applied when the live fetch fails so a transient blip doesn't
+# suppress live discovery for a full hour.
+MODEL_LIST_ERROR_TTL_SECONDS = int(os.getenv("MODEL_LIST_ERROR_TTL_SECONDS", "60"))
+MODEL_LIST_REQUEST_TIMEOUT_SECONDS = float(os.getenv("MODEL_LIST_REQUEST_TIMEOUT_SECONDS", "5"))
 
 # Pricing tiers (per million tokens, USD)
 # Sourced from open-sourced Claude Code CLI (src/utils/modelCost.ts)

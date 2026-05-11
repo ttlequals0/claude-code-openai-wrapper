@@ -4,11 +4,12 @@ OpenAI API-compatible wrapper for Claude Code. Drop it in front of any OpenAI cl
 
 ## Version
 
-**Current:** 2.9.3
+**Current:** 2.9.6
 
 Highlights of recent releases (full history in [CHANGELOG.md](./CHANGELOG.md)):
 
-- **2.9.x** - CodeQL hardening: sanitised error responses (no more `str(e)` to clients), `filter_content` rewrite against polynomial ReDoS, `/v1/debug/request` gated behind `DEBUG_MODE`/`VERBOSE`, workflow permissions pinned. Image trimmed to 775 MB (`poetry install --only main`, `.dockerignore`). `claude-agent-sdk` pinned to 0.1.65 with the `[otel]` extra.
+- **2.9.6** - `claude-agent-sdk` 0.1.68 -> 0.1.81. urllib3 floor raised to 2.7.0 and `python-multipart` to 0.0.27 to close three HIGH Dependabot alerts. Pulled in upstream `RichardAtCT#46` so `/v1/models` returns Anthropic's live catalogue when `ANTHROPIC_API_KEY` is set (cached, with a short error TTL so transient outages do not stick for an hour). `check-sdk-version.yml` now opens a draft bump PR on drift instead of writing only to the job summary.
+- **2.9.x** (earlier) - CodeQL hardening: sanitised error responses (no more `str(e)` to clients), `filter_content` rewrite against polynomial ReDoS, `/v1/debug/request` gated behind `DEBUG_MODE`/`VERBOSE`, workflow permissions pinned. Image trimmed via `poetry install --only main` and a real `.dockerignore`.
 - **2.8.x** - Security dep bumps, breaker defaults loosened, CLI stderr capture, structured-log state unmasked.
 - **2.7.0** - Added `claude-opus-4-7`; retired `claude-3-*` family; corrected context-window and max-output metadata.
 - **2.6.0** - OpenAI function calling simulation (`tools` / `tool_choice`), JSON schema support in `response_format`, real-time streaming fence stripping, CPU watchdog.
@@ -16,7 +17,7 @@ Highlights of recent releases (full history in [CHANGELOG.md](./CHANGELOG.md)):
 
 ## Status
 
-Production ready. **650 tests passing (31 skipped)**. Streaming works. Sessions work. JSON mode works. Function calling works. Tools are off by default for speed - pass `enable_tools: true` to turn them on. Auth supports API key, Bedrock, Vertex AI, and CLI.
+Production ready. **664 tests passing (31 skipped)**. Streaming works. Sessions work. JSON mode works. Function calling works. Tools are off by default for speed - pass `enable_tools: true` to turn them on. Auth supports API key, Bedrock, Vertex AI, and CLI.
 
 ## Quick Start
 
@@ -127,7 +128,7 @@ docker run -d -p 8000:8000 \
 docker run -d -p 8000:8000 \
   -v ~/.claude:/root/.claude \
   --name claude-wrapper \
-  ttlequals0/claude-code-openai-wrapper:2.9.3
+  ttlequals0/claude-code-openai-wrapper:2.9.6
 
 # Or build locally (prod stage is the default target)
 docker build --platform linux/amd64 -t claude-wrapper:local .
@@ -174,12 +175,20 @@ Listed in roughly the order you will reach for them.
 | `CLAUDE_CWD` | Working directory Claude Code runs in | isolated temp dir |
 | `CLAUDE_AUTH_METHOD` | `cli`, `api_key`, `bedrock`, `vertex` | auto-detect |
 | `API_KEY` | Require this key on every request; prompts at startup if unset | interactive prompt |
-| `ANTHROPIC_API_KEY` | Direct API key (for `api_key` auth) | - |
+| `ANTHROPIC_API_KEY` | Direct API key (for `api_key` auth). Optional — also unlocks live `/v1/models` discovery and dynamic latest-Sonnet default. | - |
 | `CLAUDE_CODE_USE_BEDROCK` | Enable AWS Bedrock backend | `false` |
 | `AWS_REGION` / `AWS_DEFAULT_REGION` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Bedrock credentials | - |
 | `CLAUDE_CODE_USE_VERTEX` | Enable Google Vertex AI backend | `false` |
 | `ANTHROPIC_VERTEX_PROJECT_ID` / `CLOUD_ML_REGION` / `GOOGLE_APPLICATION_CREDENTIALS` | Vertex credentials | - |
-| `DEFAULT_MODEL` | Default model id when request omits one | `claude-sonnet-4-6` |
+| `DEFAULT_MODEL` | Default model id when request omits one. When unset and `ANTHROPIC_API_KEY` is configured, the wrapper resolves the latest Sonnet at startup; otherwise falls back to `claude-sonnet-4-6`. | auto |
+| `FAST_MODEL` | Speed/cost-optimized model alias used internally. | `claude-haiku-4-5-20251001` |
+| `CLAUDE_MODELS_OVERRIDE` | Comma-separated model IDs to advertise via `/v1/models`. Takes precedence over both live and static lists. | - |
+| `MODEL_LIST_CACHE_TTL_SECONDS` | Cache TTL for live `/v1/models` results. | `3600` |
+| `MODEL_LIST_ERROR_TTL_SECONDS` | Short cache TTL applied when the live fetch fails so transient outages don't suppress live discovery for the full hour. | `60` |
+| `MODEL_LIST_REQUEST_TIMEOUT_SECONDS` | HTTP timeout for the live model fetch (seconds). | `5` |
+| `ANTHROPIC_MODELS_URL` | Override the live models endpoint. Point at a proxy or staging URL during testing. | `https://api.anthropic.com/v1/models` |
+| `ANTHROPIC_VERSION` | `anthropic-version` header sent to the Models API. | `2023-06-01` |
+| `ANTHROPIC_BETA` / `ANTHROPIC_BETA_HEADER` | Optional `anthropic-beta` header forwarded to the Models API for beta-gated features. | - |
 | `DEBUG_MODE` | Enable debug logging and unlock `/v1/debug/request` | `false` |
 | `VERBOSE` | Same unlock effect on `/v1/debug/request` | `false` |
 | `CORS_ORIGINS` | Allowed CORS origins (JSON array) | `["*"]` |
@@ -206,6 +215,19 @@ curl -X POST http://localhost:8000/v1/chat/completions \
       {"role": "user", "content": "What is 2 + 2?"}
     ]
   }'
+
+# With API key protection (when enabled)
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-generated-api-key" \
+  -d '{
+    "model": "claude-sonnet-4-6",
+    "messages": [
+      {"role": "user", "content": "Write a Python hello world script"}
+    ],
+    "stream": true
+  }'
+
 ```
 
 ### OpenAI Python SDK
@@ -266,6 +288,8 @@ Claude-specific options via HTTP headers:
 
 Model IDs, context windows, and pricing are sourced from the Anthropic models docs (`platform.claude.com/docs/en/about-claude/models/overview`) and mirrored in `src/constants.py`.
 
+With `ANTHROPIC_API_KEY` set, `/v1/models` returns Anthropic's live catalogue (cached for `MODEL_LIST_CACHE_TTL_SECONDS`, default 1 hour) and the wrapper picks the latest Sonnet as `DEFAULT_MODEL` at startup. Without it (Bedrock, Vertex, or Claude CLI auth), the static list below is served and `claude-sonnet-4-6` is the fallback. `CLAUDE_MODELS_OVERRIDE=a,b,c` pins the list regardless of auth.
+
 ### Latest
 | Model | Context | Max Output | Input $/MTok | Output $/MTok |
 |-------|---------|-----------|-------------|--------------|
@@ -286,6 +310,8 @@ Model IDs, context windows, and pricing are sourced from the Anthropic models do
 |-------|---------|-----------|-------------|--------------|-------------|
 | `claude-sonnet-4-20250514` | 200K | 64K | $3 | $15 | `claude-sonnet-4-6` |
 | `claude-opus-4-20250514` | 200K | 32K | $15 | $75 | `claude-opus-4-7` |
+
+**Note:** Claude 3.x models are not supported by the Claude Agent SDK.
 
 ## Session Continuity
 
@@ -312,6 +338,8 @@ Sessions expire after 1 hour of inactivity. Management endpoints:
 - `GET /v1/sessions/{id}` - session details
 - `DELETE /v1/sessions/{id}` - delete session
 - `GET /v1/sessions/stats` - session statistics
+
+See `examples/session_continuity.py` for Python and curl examples.
 
 ## API Endpoints
 
@@ -423,7 +451,7 @@ With `json_object` mode, the wrapper adds system prompt instructions for JSON ou
 ## Testing
 
 ```bash
-# Run the full test suite (650 tests, ~3 s on a laptop)
+# Run the full test suite (664 tests, ~3 s on a laptop)
 poetry run pytest tests/
 
 # Quick endpoint test (server must be running)
