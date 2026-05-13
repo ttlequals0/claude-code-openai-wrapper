@@ -513,7 +513,9 @@ class TestProbeCliAuth:
 
         importlib.reload(src.auth)
         fake_cli = MagicMock()
-        fake_cli.verify_cli = AsyncMock(side_effect=RuntimeError("Not logged in - Please run /login"))
+        fake_cli.verify_cli = AsyncMock(
+            side_effect=RuntimeError("Not logged in - Please run /login")
+        )
         result = await src.auth.probe_cli_auth(cli=fake_cli)
         assert result is False
         assert src.auth.cli_health.ok is False
