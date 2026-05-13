@@ -4,10 +4,11 @@ OpenAI API-compatible wrapper for Claude Code. Drop it in front of any OpenAI cl
 
 ## Version
 
-**Current:** 2.9.6
+**Current:** 2.9.7
 
 Highlights of recent releases (full history in [CHANGELOG.md](./CHANGELOG.md)):
 
+- **2.9.7** - Active Claude-CLI auth health probe (10-minute default, configurable via `CLI_AUTH_PROBE_INTERVAL_SECONDS`). `/v1/chat/completions` and `/v1/messages` now return **HTTP 401** with `error.type=authentication_error` when the bundled CLI loses its session, so OpenAI / Anthropic client libraries route the failure as `AuthenticationError` instead of a transient 502/503. `/v1/auth/status` exposes the new `cli_health` block. Defense-in-depth: `error_during_execution` results whose stderr matches `Not logged in / Please run /login / Invalid API key` also map to 401 and seed `cli_health` failed.
 - **2.9.6** - `claude-agent-sdk` 0.1.68 -> 0.1.81. urllib3 floor raised to 2.7.0 and `python-multipart` to 0.0.27 to close three HIGH Dependabot alerts. Pulled in upstream `RichardAtCT#46` so `/v1/models` returns Anthropic's live catalogue when `ANTHROPIC_API_KEY` is set (cached, with a short error TTL so transient outages do not stick for an hour). `check-sdk-version.yml` now opens a draft bump PR on drift instead of writing only to the job summary.
 - **2.9.x** (earlier) - CodeQL hardening: sanitised error responses (no more `str(e)` to clients), `filter_content` rewrite against polynomial ReDoS, `/v1/debug/request` gated behind `DEBUG_MODE`/`VERBOSE`, workflow permissions pinned. Image trimmed via `poetry install --only main` and a real `.dockerignore`.
 - **2.8.x** - Security dep bumps, breaker defaults loosened, CLI stderr capture, structured-log state unmasked.
@@ -17,7 +18,7 @@ Highlights of recent releases (full history in [CHANGELOG.md](./CHANGELOG.md)):
 
 ## Status
 
-Production ready. **664 tests passing (31 skipped)**. Streaming works. Sessions work. JSON mode works. Function calling works. Tools are off by default for speed - pass `enable_tools: true` to turn them on. Auth supports API key, Bedrock, Vertex AI, and CLI.
+Production ready. **673 tests passing (31 skipped)**. Streaming works. Sessions work. JSON mode works. Function calling works. Tools are off by default for speed - pass `enable_tools: true` to turn them on. Auth supports API key, Bedrock, Vertex AI, and CLI.
 
 ## Quick Start
 
@@ -189,6 +190,7 @@ Listed in roughly the order you will reach for them.
 | `ANTHROPIC_MODELS_URL` | Override the live models endpoint. Point at a proxy or staging URL during testing. | `https://api.anthropic.com/v1/models` |
 | `ANTHROPIC_VERSION` | `anthropic-version` header sent to the Models API. | `2023-06-01` |
 | `ANTHROPIC_BETA` / `ANTHROPIC_BETA_HEADER` | Optional `anthropic-beta` header forwarded to the Models API for beta-gated features. | - |
+| `CLI_AUTH_PROBE_INTERVAL_SECONDS` | Background CLI-auth probe cadence when `CLAUDE_AUTH_METHOD=claude_cli`. Each probe is a 1-turn `query` (~$0.001 at Sonnet pricing); a failure flips `cli_health.ok` so `/v1/chat/completions` and `/v1/messages` return 401 instead of letting the SDK fail loudly. Set `0` to disable. Ignored for non-cli auth methods. | `600` (10 min) |
 | `DEBUG_MODE` | Enable debug logging and unlock `/v1/debug/request` | `false` |
 | `VERBOSE` | Same unlock effect on `/v1/debug/request` | `false` |
 | `CORS_ORIGINS` | Allowed CORS origins (JSON array) | `["*"]` |
@@ -451,7 +453,7 @@ With `json_object` mode, the wrapper adds system prompt instructions for JSON ou
 ## Testing
 
 ```bash
-# Run the full test suite (664 tests, ~3 s on a laptop)
+# Run the full test suite (673 tests, ~3 s on a laptop)
 poetry run pytest tests/
 
 # Quick endpoint test (server must be running)

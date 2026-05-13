@@ -125,3 +125,37 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+class TestChatCompletionsCliHealthGate:
+    """In-process gate check: when auth_method=claude_cli and the latest probe
+    failed, /v1/chat/completions must return 401 with an OpenAI-shaped
+    authentication_error body, without touching the SDK.
+    """
+
+    def test_chat_completions_returns_401_when_cli_health_unhealthy(self, monkeypatch):
+        from fastapi.testclient import TestClient
+
+        from src import main as main_mod
+        from src import auth as auth_mod
+
+        monkeypatch.setattr(auth_mod.auth_manager, "auth_method", "claude_cli", raising=False)
+        auth_mod.cli_health.mark_failed("auth_failure", "Not logged in - Please run /login")
+
+        try:
+            client = TestClient(main_mod.app)
+            resp = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "claude-sonnet-4-6",
+                    "messages": [{"role": "user", "content": "hello"}],
+                },
+            )
+        finally:
+            auth_mod.cli_health.mark_ok()
+
+        assert resp.status_code == 401, resp.text
+        body = resp.json()
+        assert body["error"]["type"] == "authentication_error"
+        assert body["error"]["code"] == "claude_cli_not_authenticated"
+        assert body["error"]["error_kind"] == "auth_failure"

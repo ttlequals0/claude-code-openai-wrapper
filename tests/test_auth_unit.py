@@ -491,6 +491,48 @@ class TestGetApiKey:
                 assert result in ["env-key", "runtime-key"]
 
 
+class TestProbeCliAuth:
+    """Cover the periodic CLI-auth probe in src.auth.probe_cli_auth()."""
+
+    @pytest.mark.asyncio
+    async def test_probe_cli_auth_success_marks_ok(self):
+        import src.auth
+
+        importlib.reload(src.auth)
+        fake_cli = MagicMock()
+        fake_cli.verify_cli = AsyncMock(return_value=True)
+        result = await src.auth.probe_cli_auth(cli=fake_cli)
+        assert result is True
+        assert src.auth.cli_health.ok is True
+        assert src.auth.cli_health.last_ok_at is not None
+        assert src.auth.cli_health.error_kind is None
+
+    @pytest.mark.asyncio
+    async def test_probe_cli_auth_marker_in_stderr_marks_auth_failure(self):
+        import src.auth
+
+        importlib.reload(src.auth)
+        fake_cli = MagicMock()
+        fake_cli.verify_cli = AsyncMock(side_effect=RuntimeError("Not logged in - Please run /login"))
+        result = await src.auth.probe_cli_auth(cli=fake_cli)
+        assert result is False
+        assert src.auth.cli_health.ok is False
+        assert src.auth.cli_health.error_kind == "auth_failure"
+        assert "Not logged in" in (src.auth.cli_health.error_message or "")
+
+    @pytest.mark.asyncio
+    async def test_probe_cli_auth_generic_error_marks_unknown(self):
+        import src.auth
+
+        importlib.reload(src.auth)
+        fake_cli = MagicMock()
+        fake_cli.verify_cli = AsyncMock(side_effect=RuntimeError("connection refused"))
+        result = await src.auth.probe_cli_auth(cli=fake_cli)
+        assert result is False
+        assert src.auth.cli_health.ok is False
+        assert src.auth.cli_health.error_kind == "unknown"
+
+
 # Reset module state after tests
 @pytest.fixture(autouse=True)
 def reset_auth_module():

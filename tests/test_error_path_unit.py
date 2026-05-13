@@ -147,3 +147,61 @@ class TestParseClaudeMessageAssistantError:
             cli.parse_claude_message(messages)
         assert excinfo.value.subtype == "assistant_rate_limit"
         assert "rate_limit" in excinfo.value.errors
+
+
+class TestCliAuthFailureToFourOhOne:
+    """Defense-in-depth: when ClaudeResultError carries CLI auth markers in
+    its stderr_tail or error_message, _build_sdk_error_response must return
+    HTTP 401 instead of 502, with an OpenAI-shaped authentication_error body.
+    """
+
+    def test_sdk_error_with_auth_marker_in_stderr_maps_to_401(self):
+        err = ClaudeResultError(
+            subtype="error_during_execution",
+            num_turns=0,
+            errors=None,
+            stop_reason=None,
+            error_message=None,
+            stderr_tail="Not logged in - Please run /login",
+        )
+        resp = _build_sdk_error_response("req-cli-auth", "claude-sonnet-4-6", err)
+        assert resp.status_code == 401
+        body = _body(resp)
+        assert body["error"]["type"] == "authentication_error"
+        assert body["error"]["code"] == "claude_cli_not_authenticated"
+
+    def test_sdk_error_with_invalid_api_key_in_message_maps_to_401(self):
+        err = ClaudeResultError(
+            subtype="error_during_execution",
+            errors=["Invalid API key"],
+            error_message="Invalid API key",
+        )
+        resp = _build_sdk_error_response("req-cli-key", "claude-sonnet-4-6", err)
+        assert resp.status_code == 401
+        body = _body(resp)
+        assert body["error"]["type"] == "authentication_error"
+
+    def test_sdk_error_without_auth_marker_still_502(self):
+        err = ClaudeResultError(
+            subtype="error_during_execution",
+            errors=["upstream timeout"],
+            stderr_tail="connection refused",
+        )
+        resp = _build_sdk_error_response("req-generic", "claude-sonnet-4-6", err)
+        assert resp.status_code == 502
+        body = _body(resp)
+        assert body["error"]["type"] == "upstream_sdk_error"
+
+    def test_sdk_error_with_auth_marker_seeds_cli_health(self):
+        import src.auth
+
+        src.auth.cli_health.mark_ok()
+        assert src.auth.cli_health.ok is True
+
+        err = ClaudeResultError(
+            subtype="error_during_execution",
+            stderr_tail="Not logged in - Please run /login",
+        )
+        _build_sdk_error_response("req-cli-seed", "claude-sonnet-4-6", err)
+        assert src.auth.cli_health.ok is False
+        assert src.auth.cli_health.error_kind == "auth_failure"
