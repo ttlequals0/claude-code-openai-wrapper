@@ -211,5 +211,39 @@ class TestAnthropicMessagesEndpoint:
         assert "output_tokens" in result["usage"]
 
 
+class TestAnthropicMessagesCliHealthGate:
+    """In-process gate check: /v1/messages must return 401 (not 503) when the
+    Claude CLI probe failed, so Anthropic SDK clients (VC and similar) route
+    the failure as AuthenticationError instead of a transient server error.
+    """
+
+    def test_messages_returns_401_when_cli_health_unhealthy(self, monkeypatch):
+        from fastapi.testclient import TestClient
+
+        from src import main as main_mod
+        from src import auth as auth_mod
+
+        monkeypatch.setattr(auth_mod.auth_manager, "auth_method", "claude_cli", raising=False)
+        auth_mod.cli_health.mark_failed("auth_failure", "Not logged in - Please run /login")
+
+        try:
+            client = TestClient(main_mod.app)
+            resp = client.post(
+                "/v1/messages",
+                json={
+                    "model": "claude-sonnet-4-6",
+                    "max_tokens": 16,
+                    "messages": [{"role": "user", "content": "hello"}],
+                },
+            )
+        finally:
+            auth_mod.cli_health.mark_ok()
+
+        assert resp.status_code == 401, resp.text
+        body = resp.json()
+        assert body["error"]["type"] == "authentication_error"
+        assert body["error"]["code"] == "claude_cli_not_authenticated"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

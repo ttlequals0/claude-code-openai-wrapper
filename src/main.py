@@ -52,7 +52,17 @@ from src.function_calling import (
     convert_tool_messages,
 )
 from src.cpu_watchdog import cpu_watchdog
-from src.auth import verify_api_key, security, validate_claude_code_auth, get_claude_code_auth_info
+from src.auth import (
+    verify_api_key,
+    security,
+    validate_claude_code_auth,
+    get_claude_code_auth_info,
+)
+
+# Import the module (not the singletons) so reloads of src.auth in tests stay
+# in sync with main.py's view of _auth.cli_health / auth_manager / probe_cli_auth.
+from src import auth as _auth
+from src.auth import _classify_probe_error  # pure function, safe to bind once
 from src.parameter_validator import ParameterValidator, CompatibilityReporter
 from src.session_manager import session_manager
 from src.tool_manager import tool_manager
@@ -435,17 +445,21 @@ async def lifespan(app: FastAPI):
 
         if cli_verified:
             logger.info("✅ Claude Agent SDK verified successfully")
+            _auth.cli_health.mark_ok()
         else:
             logger.warning("⚠️  Claude Agent SDK verification returned False")
             logger.warning("The server will start, but requests may fail.")
+            _auth.cli_health.mark_failed("unknown", "startup verify_cli returned False")
     except asyncio.TimeoutError:
         logger.warning("⚠️  Claude Agent SDK verification timed out (30s)")
         logger.warning("This may indicate network issues or SDK configuration problems.")
         logger.warning("The server will start, but first request may be slow.")
+        _auth.cli_health.mark_failed("unknown", "startup verify_cli timed out after 30s")
     except Exception as e:
         logger.error(f"⚠️  Claude Agent SDK verification failed: {e}")
         logger.warning("The server will start, but requests may fail.")
         logger.warning("Check that Claude Code CLI is properly installed and authenticated.")
+        _auth.cli_health.mark_failed(_classify_probe_error(str(e)), str(e))
 
     # Log debug information if debug mode is enabled
     if DEBUG_MODE or VERBOSE:
@@ -490,6 +504,28 @@ async def lifespan(app: FastAPI):
 
     cost_cleanup_task = asyncio.get_running_loop().create_task(cost_cleanup_loop())
 
+    # Periodic CLI auth probe. Only runs when auth_method == claude_cli because
+    # API key / Bedrock / Vertex failures already surface as
+    # assistant_authentication_failed via _ASSISTANT_ERROR_STATUS. Set the
+    # interval to 0 to disable. Each probe is a 1-turn query and costs ~$0.001
+    # at Sonnet pricing; default 10 min keeps the bill low while still bounding
+    # the stale window.
+    async def cli_auth_probe_loop():
+        interval = int(os.getenv("CLI_AUTH_PROBE_INTERVAL_SECONDS", "600"))
+        if interval <= 0:
+            logger.info("cli_auth_probe disabled (interval=%s)", interval)
+            return
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                if _auth.auth_manager.auth_method != "claude_cli":
+                    continue
+                await _auth.probe_cli_auth()
+        except asyncio.CancelledError:
+            pass
+
+    cli_auth_probe_task = asyncio.get_running_loop().create_task(cli_auth_probe_loop())
+
     # Start CPU watchdog (Linux/Docker only)
     cpu_watchdog.start()
 
@@ -497,6 +533,7 @@ async def lifespan(app: FastAPI):
 
     cpu_watchdog.stop()
     cost_cleanup_task.cancel()
+    cli_auth_probe_task.cancel()
 
     # Cleanup on shutdown
     logger.info("Shutting down session manager...")
@@ -770,7 +807,12 @@ def _build_sdk_error_response(request_id: str, model: str, err: ClaudeResultErro
     """Non-recoverable SDK result: return 502 so clients know to retry with
     backoff. Structured body includes the SDK subtype and any errors so
     callers can tell the difference between a max-turns overflow and a
-    transport failure."""
+    transport failure.
+
+    Defense-in-depth for the CLI-auth probe loop: when stderr_tail (or the
+    error_message) matches the known auth-failure markers, return 401 instead
+    and seed _auth.cli_health so the next request fails fast without a round-trip.
+    """
     logger.error(
         _kv(
             "claude_sdk_error",
@@ -786,6 +828,33 @@ def _build_sdk_error_response(request_id: str, model: str, err: ClaudeResultErro
         logger.error(
             f"claude_sdk_error stderr tail (request_id={request_id}):\n" f"{err.stderr_tail}"
         )
+
+    blob = " ".join(filter(None, [err.error_message, err.stderr_tail]))
+    if _classify_probe_error(blob) == "auth_failure":
+        _auth.cli_health.mark_failed("auth_failure", blob)
+        logger.warning(
+            _kv(
+                "claude_sdk_cli_auth_failed",
+                request_id=request_id,
+                model=model,
+                subtype=err.subtype,
+            )
+        )
+        return JSONResponse(
+            status_code=401,
+            content={
+                "error": {
+                    "message": (
+                        "Claude CLI is not authenticated. Run `claude /login` "
+                        "on the wrapper host and restart, or set "
+                        "ANTHROPIC_API_KEY."
+                    ),
+                    "type": "authentication_error",
+                    "code": "claude_cli_not_authenticated",
+                }
+            },
+        )
+
     return JSONResponse(
         status_code=502,
         content={
@@ -1351,6 +1420,59 @@ async def generate_streaming_response(
         yield f"data: {json.dumps(error_chunk)}\n\n"
 
 
+def _check_cli_auth_or_401() -> Optional[JSONResponse]:
+    """Gate request handlers on the latest CLI-auth probe + the auth manager.
+
+    Returns a JSONResponse with HTTP 401 (or 503 for non-cli auth methods)
+    when authentication is unhealthy, else None.
+
+    Returning a JSONResponse directly - rather than raising HTTPException -
+    is intentional: the global http_exception_handler wraps all detail bodies
+    as `error.type=api_error`, which clobbers the OpenAI-shaped
+    `authentication_error` literal that clients route on.
+    """
+    if _auth.auth_manager.auth_method == "claude_cli" and not _auth.cli_health.ok:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "error": {
+                    "message": (
+                        "Claude CLI authentication is not healthy. "
+                        "Run `claude /login` on the wrapper host and restart, "
+                        "or set ANTHROPIC_API_KEY."
+                    ),
+                    "type": "authentication_error",
+                    "code": "claude_cli_not_authenticated",
+                    "last_probed_at": (
+                        _auth.cli_health.last_probed_at.isoformat()
+                        if _auth.cli_health.last_probed_at
+                        else None
+                    ),
+                    "error_kind": _auth.cli_health.error_kind,
+                    "error_message": _auth.cli_health.error_message,
+                }
+            },
+        )
+
+    auth_valid, auth_info = validate_claude_code_auth()
+    if not auth_valid:
+        status = 401 if _auth.auth_manager.auth_method == "claude_cli" else 503
+        return JSONResponse(
+            status_code=status,
+            content={
+                "error": {
+                    "message": "Claude Code authentication failed",
+                    "type": "authentication_error" if status == 401 else "service_unavailable",
+                    "code": "claude_cli_not_authenticated" if status == 401 else "auth_unavailable",
+                    "errors": auth_info.get("errors", []),
+                    "method": auth_info.get("method", "none"),
+                }
+            },
+        )
+
+    return None
+
+
 @app.post("/v1/chat/completions")
 @rate_limit_endpoint("chat")
 async def chat_completions(
@@ -1362,17 +1484,10 @@ async def chat_completions(
     # Check FastAPI API key if configured
     await verify_api_key(request, credentials)
 
-    # Validate Claude Code authentication
-    auth_valid, auth_info = validate_claude_code_auth()
-
-    if not auth_valid:
-        error_detail = {
-            "message": "Claude Code authentication failed",
-            "errors": auth_info.get("errors", []),
-            "method": auth_info.get("method", "none"),
-            "help": "Check /v1/auth/status for detailed authentication information",
-        }
-        raise HTTPException(status_code=503, detail=error_detail)
+    # Gate on Claude CLI probe + config-level auth validation.
+    auth_block = _check_cli_auth_or_401()
+    if auth_block is not None:
+        return auth_block
 
     # Circuit breaker check: if the SDK has been failing at >50% for a minute,
     # fail-fast with 503 instead of forwarding another doomed request. The
@@ -1672,17 +1787,10 @@ async def anthropic_messages(
     # Check FastAPI API key if configured
     await verify_api_key(request, credentials)
 
-    # Validate Claude Code authentication
-    auth_valid, auth_info = validate_claude_code_auth()
-
-    if not auth_valid:
-        error_detail = {
-            "message": "Claude Code authentication failed",
-            "errors": auth_info.get("errors", []),
-            "method": auth_info.get("method", "none"),
-            "help": "Check /v1/auth/status for detailed authentication information",
-        }
-        raise HTTPException(status_code=503, detail=error_detail)
+    # Gate on Claude CLI probe + config-level auth validation.
+    auth_block = _check_cli_auth_or_401()
+    if auth_block is not None:
+        return auth_block
 
     try:
         logger.info(f"Anthropic Messages API request: model={request_body.model}")
@@ -2746,6 +2854,7 @@ async def get_auth_status(request: Request):
 
     return {
         "claude_code_auth": auth_info,
+        "cli_health": _auth.cli_health.as_dict(),
         "server_info": {
             "api_key_required": bool(active_api_key),
             "api_key_source": (

@@ -1,5 +1,7 @@
 import os
 import logging
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Tuple
 from fastapi import HTTPException, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -284,3 +286,106 @@ def get_claude_code_auth_info() -> Dict[str, Any]:
         "status": auth_manager.auth_status,
         "environment_variables": list(auth_manager.get_claude_code_env_vars().keys()),
     }
+
+
+# Markers the Claude CLI emits to stderr (or wraps in SDK exceptions) when its
+# stored session is missing or expired. Compared case-insensitively against the
+# concatenation of an exception's str() and any captured stderr_tail.
+_CLI_AUTH_FAILURE_MARKERS = (
+    "not logged in",
+    "please run /login",
+    "invalid api key",
+    "authentication_error",
+    "401",
+)
+
+
+def _classify_probe_error(blob: str) -> str:
+    lowered = (blob or "").lower()
+    if any(marker in lowered for marker in _CLI_AUTH_FAILURE_MARKERS):
+        return "auth_failure"
+    return "unknown"
+
+
+@dataclass
+class CliHealth:
+    """Latest observed health of the Claude CLI auth path.
+
+    The probe loop (run only when auth_method == 'claude_cli') refreshes this
+    on an interval; the chat / messages handlers consult `ok` to short-circuit
+    with HTTP 401 before round-tripping through the SDK.
+    """
+
+    ok: bool = True
+    last_probed_at: Optional[datetime] = None
+    last_ok_at: Optional[datetime] = None
+    error_kind: Optional[str] = None
+    error_message: Optional[str] = None
+
+    def mark_ok(self) -> None:
+        now = datetime.now(timezone.utc)
+        self.ok = True
+        self.last_probed_at = now
+        self.last_ok_at = now
+        self.error_kind = None
+        self.error_message = None
+
+    def mark_failed(self, kind: str, message: str) -> None:
+        self.ok = False
+        self.last_probed_at = datetime.now(timezone.utc)
+        self.error_kind = kind
+        # Trim to keep logs and /v1/auth/status compact.
+        self.error_message = (message or "")[:500]
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "ok": self.ok,
+            "last_probed_at": self.last_probed_at.isoformat() if self.last_probed_at else None,
+            "last_ok_at": self.last_ok_at.isoformat() if self.last_ok_at else None,
+            "error_kind": self.error_kind,
+            "error_message": self.error_message,
+        }
+
+
+cli_health = CliHealth()
+
+
+async def probe_cli_auth(cli=None) -> bool:
+    """Run a 1-turn CLI probe and update `cli_health`.
+
+    Reuses `claude_cli.verify_cli()` (which already issues a short
+    `query(prompt="Hello", max_turns=1)`); on any exception, classifies the
+    failure as auth_failure if the marker set matches, else unknown.
+
+    `cli` is the ClaudeCodeCLI instance to probe. When omitted, lazy-resolves
+    the module-level singleton from `src.main` so a periodic probe exercises
+    exactly the same instance that real requests use. The parameter is
+    primarily there for tests, which inject a mock.
+
+    Returns True when the probe succeeded, False otherwise. Never raises.
+    """
+    if cli is None:
+        # Lazy import - src.main imports src.auth at module load.
+        from src import main as _main  # noqa: WPS433 - intentional lazy import
+
+        cli = _main.claude_cli
+
+    try:
+        ok = await cli.verify_cli()
+        if ok:
+            cli_health.mark_ok()
+            logger.info("cli_auth_probe_ok")
+            return True
+        cli_health.mark_failed("unknown", "verify_cli returned False")
+        logger.warning("cli_auth_probe_failed kind=unknown reason=verify_cli_returned_false")
+        return False
+    except Exception as exc:  # noqa: BLE001 - the probe must never propagate
+        message = str(exc)
+        kind = _classify_probe_error(message)
+        cli_health.mark_failed(kind, message)
+        logger.warning(
+            "cli_auth_probe_failed kind=%s error=%s",
+            kind,
+            message[:200].replace("\n", " "),
+        )
+        return False

@@ -5,6 +5,65 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.7] - 2026-05-12
+
+### Added
+
+- Active CLI-auth health probe. When `CLAUDE_AUTH_METHOD=claude_cli`,
+  the lifespan schedules a periodic background coroutine that runs
+  the existing `claude_cli.verify_cli()` (a 1-turn
+  `query(prompt="Hello", max_turns=1)`) and updates a shared
+  `cli_health` state. Bounds the stale window between the bundled CLI
+  losing its session and a real chat request discovering it.
+  - Interval is configurable via `CLI_AUTH_PROBE_INTERVAL_SECONDS`
+    (default 600s / 10 min). Set to 0 to disable. Skipped entirely for
+    non-cli auth methods (API key / Bedrock / Vertex), which surface
+    upstream auth failures via the existing
+    `assistant_authentication_failed` -> 401 mapping.
+  - Probe results visible at `GET /v1/auth/status` under a new
+    `cli_health` block: `ok`, `last_probed_at`, `last_ok_at`,
+    `error_kind` (`auth_failure` | `unknown` | `null`),
+    `error_message`.
+
+### Changed
+
+- `POST /v1/chat/completions` and `POST /v1/messages` now return
+  **HTTP 401** with `error.type=authentication_error` and
+  `error.code=claude_cli_not_authenticated` when the latest CLI probe
+  failed, instead of letting the request fall through to a generic
+  502 from the SDK or 503 from the config check. OpenAI / Anthropic
+  client libraries route 401 as `AuthenticationError`, giving callers a
+  durable signal to roll keys or re-`/login` rather than retrying a
+  doomed request.
+- `_build_sdk_error_response` (the
+  `ClaudeResultError.subtype=error_during_execution` path) now scans
+  `error_message` + `stderr_tail` for the same CLI-auth-failure markers
+  the probe uses (`not logged in`, `please run /login`,
+  `invalid api key`, `authentication_error`, `401`). On a match the
+  response is 401 + `authentication_error` and `cli_health` is seeded
+  failed so the next request fails fast without a round-trip.
+- Auth-failure responses now bypass the global `http_exception_handler`
+  (which previously rewrote the body as `error.type=api_error`) by
+  returning `JSONResponse` directly. Required for OpenAI / Anthropic
+  clients to read the authentication signal.
+
+### Tests
+
+- `tests/test_auth_unit.py::TestProbeCliAuth` - three async unit tests
+  covering `probe_cli_auth()`: success (`mark_ok`), `Not logged in`
+  stderr (`auth_failure`), generic exception (`unknown`).
+- `tests/test_endpoints.py::TestChatCompletionsCliHealthGate` and
+  `tests/test_anthropic_messages.py::TestAnthropicMessagesCliHealthGate`
+  - in-process TestClient assertions that both endpoints return 401
+  with `authentication_error` when `cli_health.ok=False`.
+- `tests/test_error_path_unit.py::TestCliAuthFailureToFourOhOne` -
+  four tests for the stderr-marker mapping: 401 on `Not logged in`,
+  401 on `Invalid API key`, 502 regression guard on `connection
+  refused`, and a seeding test confirming a real request flips
+  `cli_health.ok` to False.
+- Suite total: 673 passed, 31 skipped (was 664/31 on v2.9.6; +9 new
+  tests).
+
 ## [2.9.6] - 2026-05-11
 
 ### Changed
