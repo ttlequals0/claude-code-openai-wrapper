@@ -58,6 +58,7 @@ from src.auth import (
     validate_claude_code_auth,
     get_claude_code_auth_info,
 )
+
 # Import the module (not the singletons) so reloads of src.auth in tests stay
 # in sync with main.py's view of _auth.cli_health / auth_manager / probe_cli_auth.
 from src import auth as _auth
@@ -1442,9 +1443,11 @@ def _check_cli_auth_or_401() -> Optional[JSONResponse]:
                     ),
                     "type": "authentication_error",
                     "code": "claude_cli_not_authenticated",
-                    "last_probed_at": _auth.cli_health.last_probed_at.isoformat()
-                    if _auth.cli_health.last_probed_at
-                    else None,
+                    "last_probed_at": (
+                        _auth.cli_health.last_probed_at.isoformat()
+                        if _auth.cli_health.last_probed_at
+                        else None
+                    ),
                     "error_kind": _auth.cli_health.error_kind,
                     "error_message": _auth.cli_health.error_message,
                 }
