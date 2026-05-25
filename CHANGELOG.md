@@ -5,6 +5,24 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.8] - 2026-05-24
+
+### Changed
+
+- Bumped `claude-agent-sdk` from `0.2.82` to `0.2.87`. All five
+  releases in this delta are bundled-Claude-CLI-only updates,
+  advancing the embedded CLI from `2.1.145` to `2.1.150`. No public
+  SDK API changes; the two breaking changes that shipped in `0.2.82`
+  (non-blocking MCP server startup, Task tools replacing TodoWrite)
+  were already absorbed in `v2.9.7`.
+
+### Security
+
+- Bumped `idna` from `3.10` to `3.15` to pick up
+  **CVE-2026-45409** (oversize-input quadratic-time bypass of the
+  prior CVE-2024-3651 mitigation, fixed in 3.14) plus the
+  `check_label` DNS-length cap added in 3.15.
+
 ## [2.9.7] - 2026-05-12
 
 ### Added
