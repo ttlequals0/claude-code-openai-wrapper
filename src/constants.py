@@ -102,6 +102,11 @@ _DEFAULT_MODEL_META = {
 }
 
 _MODEL_OVERRIDES = {
+    "claude-opus-4-8": {
+        "context_window": 1_000_000,
+        "default_max_output": 64_000,
+        "max_output_limit": 128_000,
+    },
     "claude-opus-4-7": {
         "context_window": 1_000_000,
         "default_max_output": 64_000,
@@ -123,6 +128,7 @@ _MODEL_OVERRIDES = {
 # rebuilding the image via CLAUDE_MODELS_OVERRIDE=model-a,model-b.
 # NOTE: Claude Agent SDK only supports Claude 4+ models, not Claude 3.x.
 _ALL_MODEL_IDS = [
+    "claude-opus-4-8",
     "claude-opus-4-7",
     "claude-opus-4-6",
     "claude-sonnet-4-6",
@@ -181,6 +187,7 @@ _PRICING_OPUS_LEGACY = {"input": 15.0, "output": 75.0, "cache_read": 1.50, "cach
 _PRICING_HAIKU_45 = {"input": 1.0, "output": 5.0, "cache_read": 0.10, "cache_write": 1.25}
 
 MODEL_PRICING = {
+    "claude-opus-4-8": _PRICING_OPUS,
     "claude-opus-4-7": _PRICING_OPUS,
     "claude-opus-4-6": _PRICING_OPUS,
     "claude-opus-4-5-20251101": _PRICING_OPUS,
@@ -198,6 +205,7 @@ WEB_SEARCH_COST_USD = 0.01
 # Fallback model mapping: when an Opus model is overloaded, fall back to Sonnet
 # Sourced from Claude Code's FallbackTriggeredError pattern
 MODEL_FALLBACK_MAP = {
+    "claude-opus-4-8": "claude-sonnet-4-6",
     "claude-opus-4-7": "claude-sonnet-4-6",
     "claude-opus-4-6": "claude-sonnet-4-6",
     "claude-opus-4-5-20251101": "claude-sonnet-4-5-20250929",

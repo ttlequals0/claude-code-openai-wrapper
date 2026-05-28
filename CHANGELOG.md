@@ -5,6 +5,34 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.9] - 2026-05-28
+
+### Added
+
+- `claude-opus-4-8` to the static model catalogue in
+  `src/constants.py`. Added to `_ALL_MODEL_IDS` (first entry, ahead
+  of `claude-opus-4-7`), `_MODEL_OVERRIDES` (1M context, 64K default
+  / 128K max output), `MODEL_PRICING` (`_PRICING_OPUS` tier — $5 /
+  $25 per MTok), and `MODEL_FALLBACK_MAP` (falls back to
+  `claude-sonnet-4-6` on overload). Brings the static fallback list
+  in line with Anthropic's current `/v1/models` response so
+  deployments without `ANTHROPIC_API_KEY` (Bedrock, Vertex, or CLI
+  auth) advertise the new flagship Opus model. `claude-opus-4-7`
+  remains supported alongside it.
+- README **Latest** model table row for `claude-opus-4-8` (1M / 128K
+  / $5 / $25), inserted above the existing `claude-opus-4-7` row.
+
+### Changed
+
+- README `claude-opus-4-20250514` deprecation row now points at
+  `claude-opus-4-8` as the replacement target (the newest flagship).
+
+### Notes
+
+- `claude-agent-sdk` was re-checked against PyPI and is already pinned
+  at the latest published release (`0.2.87`, uploaded 2026-05-23). No
+  SDK bump in this release.
+
 ## [2.9.8] - 2026-05-24
 
 ### Changed
