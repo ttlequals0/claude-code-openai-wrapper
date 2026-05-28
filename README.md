@@ -4,10 +4,12 @@ OpenAI API-compatible wrapper for Claude Code. Drop it in front of any OpenAI cl
 
 ## Version
 
-**Current:** 2.9.7
+**Current:** 2.9.9
 
 Highlights of recent releases (full history in [CHANGELOG.md](./CHANGELOG.md)):
 
+- **2.9.9** - Added `claude-opus-4-8` (new Opus flagship) to the static model catalogue alongside `claude-opus-4-7`; both carry the 1M context / 128K max output / Opus pricing tier / `claude-sonnet-4-6` overload fallback. Matches the current Anthropic `/v1/models` response. `claude-agent-sdk` already at the latest published `0.2.87`; no SDK bump.
+- **2.9.8** - `idna` 3.10 -> 3.15 to close CVE-2026-45409. `claude-agent-sdk` 0.2.82 -> 0.2.87.
 - **2.9.7** - Active Claude-CLI auth health probe (10-minute default, configurable via `CLI_AUTH_PROBE_INTERVAL_SECONDS`). `/v1/chat/completions` and `/v1/messages` now return **HTTP 401** with `error.type=authentication_error` when the bundled CLI loses its session, so OpenAI / Anthropic client libraries route the failure as `AuthenticationError` instead of a transient 502/503. `/v1/auth/status` exposes the new `cli_health` block. Defense-in-depth: `error_during_execution` results whose stderr matches `Not logged in / Please run /login / Invalid API key` also map to 401 and seed `cli_health` failed.
 - **2.9.6** - `claude-agent-sdk` 0.1.68 -> 0.1.81. urllib3 floor raised to 2.7.0 and `python-multipart` to 0.0.27 to close three HIGH Dependabot alerts. Pulled in upstream `RichardAtCT#46` so `/v1/models` returns Anthropic's live catalogue when `ANTHROPIC_API_KEY` is set (cached, with a short error TTL so transient outages do not stick for an hour). `check-sdk-version.yml` now opens a draft bump PR on drift instead of writing only to the job summary.
 - **2.9.x** (earlier) - CodeQL hardening: sanitised error responses (no more `str(e)` to clients), `filter_content` rewrite against polynomial ReDoS, `/v1/debug/request` gated behind `DEBUG_MODE`/`VERBOSE`, workflow permissions pinned. Image trimmed via `poetry install --only main` and a real `.dockerignore`.
@@ -295,6 +297,7 @@ With `ANTHROPIC_API_KEY` set, `/v1/models` returns Anthropic's live catalogue (c
 ### Latest
 | Model | Context | Max Output | Input $/MTok | Output $/MTok |
 |-------|---------|-----------|-------------|--------------|
+| `claude-opus-4-8` | 1M | 128K | $5 | $25 |
 | `claude-opus-4-7` | 1M | 128K | $5 | $25 |
 | `claude-sonnet-4-6` (default) | 1M | 64K | $3 | $15 |
 | `claude-haiku-4-5-20251001` | 200K | 64K | $1 | $5 |
@@ -311,7 +314,7 @@ With `ANTHROPIC_API_KEY` set, `/v1/models` returns Anthropic's live catalogue (c
 | Model | Context | Max Output | Input $/MTok | Output $/MTok | Replacement |
 |-------|---------|-----------|-------------|--------------|-------------|
 | `claude-sonnet-4-20250514` | 200K | 64K | $3 | $15 | `claude-sonnet-4-6` |
-| `claude-opus-4-20250514` | 200K | 32K | $15 | $75 | `claude-opus-4-7` |
+| `claude-opus-4-20250514` | 200K | 32K | $15 | $75 | `claude-opus-4-8` |
 
 **Note:** Claude 3.x models are not supported by the Claude Agent SDK.
 
