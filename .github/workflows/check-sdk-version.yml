@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Compare pinned SDK vs latest PyPI release
         id: compare
@@ -62,7 +62,7 @@ jobs:
 
       - name: Set up Python
         if: steps.compare.outputs.up_to_date == 'false'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
