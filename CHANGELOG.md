@@ -5,6 +5,32 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.10] - 2026-06-14
+
+### Changed
+
+- Bumped `claude-agent-sdk` from `0.2.87` to `0.2.93`
+  (`pyproject.toml` + `poetry.lock`), the latest published release.
+  The `[otel]` extra is retained. Opened automatically by the
+  `Check claude-agent-sdk version` workflow as draft PR #25 and
+  finalized into this release.
+- Raised the `starlette` security floor from `>=0.49.1` to `>=1.0.1`
+  to close `GHSA-86qp-5c8j-p5mr` (medium): missing Host-header
+  validation poisons `request.url.path`, bypassing path-based
+  security checks. Dependabot alert #13. Resolves to `starlette
+  1.3.1`.
+- Raised the `fastapi` floor from `>=0.119.0` to `>=0.133.1` (range
+  stays `<1.0`). fastapi `<=0.132.x` caps `starlette` at `<1.0.0`;
+  `0.133.1` is the first release to drop that cap, which is required
+  to let the `starlette` floor reach `>=1.0.1`. Resolves to `fastapi
+  0.137.0`.
+
+### Notes
+
+- Full test suite green (673 passed, 31 skipped) and the app boots
+  and serves `/health`, `/version`, and `/v1/models` under
+  `starlette 1.3.1`.
+
 ## [2.9.9] - 2026-05-28
 
 ### Added
