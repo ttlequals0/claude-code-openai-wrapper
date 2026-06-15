@@ -4,10 +4,11 @@ OpenAI API-compatible wrapper for Claude Code. Drop it in front of any OpenAI cl
 
 ## Version
 
-**Current:** 2.9.9
+**Current:** 2.9.10
 
 Highlights of recent releases (full history in [CHANGELOG.md](./CHANGELOG.md)):
 
+- **2.9.10** - `claude-agent-sdk` 0.2.87 -> 0.2.93. Raised the `starlette` floor to `>=1.0.1` (resolves to 1.3.1) to close `GHSA-86qp-5c8j-p5mr` (Host-header path poisoning, Dependabot #13), which required raising the `fastapi` floor to `>=0.133.1` (resolves to 0.137.0) since fastapi `<=0.132.x` caps starlette below 1.0.
 - **2.9.9** - Added `claude-opus-4-8` (new Opus flagship) to the static model catalogue alongside `claude-opus-4-7`; both carry the 1M context / 128K max output / Opus pricing tier / `claude-sonnet-4-6` overload fallback. Matches the current Anthropic `/v1/models` response. `claude-agent-sdk` already at the latest published `0.2.87`; no SDK bump.
 - **2.9.8** - `idna` 3.10 -> 3.15 to close CVE-2026-45409. `claude-agent-sdk` 0.2.82 -> 0.2.87.
 - **2.9.7** - Active Claude-CLI auth health probe (10-minute default, configurable via `CLI_AUTH_PROBE_INTERVAL_SECONDS`). `/v1/chat/completions` and `/v1/messages` now return **HTTP 401** with `error.type=authentication_error` when the bundled CLI loses its session, so OpenAI / Anthropic client libraries route the failure as `AuthenticationError` instead of a transient 502/503. `/v1/auth/status` exposes the new `cli_health` block. Defense-in-depth: `error_during_execution` results whose stderr matches `Not logged in / Please run /login / Invalid API key` also map to 401 and seed `cli_health` failed.
