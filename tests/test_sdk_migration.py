@@ -74,7 +74,7 @@ class TestConstants:
         from src.constants import DEFAULT_MODEL, CLAUDE_MODELS
 
         assert DEFAULT_MODEL in CLAUDE_MODELS
-        assert DEFAULT_MODEL == "claude-sonnet-4-6"
+        assert DEFAULT_MODEL == "claude-sonnet-5"
 
     def test_fast_model_defined(self):
         """Test that FAST_MODEL is set to fastest model."""
