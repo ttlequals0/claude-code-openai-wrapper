@@ -5,6 +5,59 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.11] - 2026-07-01
+
+### Added
+
+- `claude-sonnet-5` (Claude Sonnet 5, GA 2026-06-09) to the static model
+  catalogue in `src/constants.py`. Added to `_ALL_MODEL_IDS`,
+  `_MODEL_OVERRIDES` (1M context, 64K default / 128K max output), and
+  `MODEL_PRICING` (reuses the `$3/$15` Sonnet tier; the introductory
+  `$2/$10` per MTok pricing that applies through 2026-08-31 is intentionally
+  not encoded so the cost tracker reflects steady-state rates).
+- `claude-fable-5` (Claude Fable 5, GA 2026-06-09 - Anthropic's most capable
+  widely released model) to the static catalogue. 1M context, 64K default /
+  128K max output, new `_PRICING_FABLE` tier (`$10/$50` per MTok published;
+  cache read/write derived from the same ratios as the other tiers).
+  `claude-mythos-5` is intentionally excluded (Project Glasswing limited
+  availability only).
+
+### Changed
+
+- Bumped `claude-agent-sdk` from `0.2.93` to `0.2.110`
+  (`pyproject.toml` + `poetry.lock`), the latest published release.
+  The `[otel]` extra is retained.
+- Changed `DEFAULT_MODEL_FALLBACK` from `claude-sonnet-4-6` to
+  `claude-sonnet-5` so deployments without live model discovery (Bedrock,
+  Vertex, Claude CLI subscription) default to the current balanced model.
+  Live discovery already resolves to the newest Sonnet automatically.
+- Raised the `cryptography` security floor from `>=46.0.5` to `>=48.0.1`
+  to close `GHSA-537c-gmf6-5ccf` (high): vulnerable OpenSSL bundled in
+  cryptography wheels. Dependabot alert #23.
+- Raised the `pyjwt` security floor from `>=2.12.0` to `>=2.13.0` to close
+  five alerts (#14-18), including `GHSA-xgmm-8j9v-c9wx` (high): a public-key
+  JWK accepted as an HMAC secret enables forged HS256 tokens.
+- Raised the `python-multipart` floor from `^0.0.27` to `>=0.0.31` to close
+  four alerts (#19-22), including `GHSA-5rvq-cxj2-64vf` (high):
+  quadratic-time semicolon querystring parsing CPU denial of service.
+- Added a `joserfc` security floor of `>=1.6.7` to close
+  `GHSA-wphv-vfrh-23q5` (medium): `b64=false` RFC7797 JWS payloads bypass
+  payload-size limits. Transitive via `authlib`. Dependabot alert #25.
+
+### Security
+
+- 11 of 12 open Dependabot alerts are resolved by the floor raises above.
+  Alert #24 (`GHSA-p4gq-832x-fm9v`, nltk URL-encoded path traversal in
+  `nltk.data.load()`, high) has **no upstream fix** as of this release
+  (affected `<= 3.9.4`, the latest published version). It is accepted as a
+  known risk; the `nltk` floor will be raised once a patched release ships.
+
+### Notes
+
+- Full test suite green and the app boots and serves `/health`, `/version`,
+  and `/v1/models` (now advertising `claude-sonnet-5` and `claude-fable-5`)
+  under `claude-agent-sdk 0.2.110`.
+
 ## [2.9.10] - 2026-06-14
 
 ### Changed
