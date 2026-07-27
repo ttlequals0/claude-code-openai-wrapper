@@ -27,7 +27,7 @@ sse-starlette = "^2.1.3"
 python-multipart = ">=0.0.31"
 # Pin the SDK exactly; bump deliberately and regenerate poetry.lock in the
 # same commit. 2.9.12: 0.2.110 -> 0.2.127 (latest; allows mcp <2.0.0).
-claude-agent-sdk = {version = "0.2.127", extras = ["otel"]}
+claude-agent-sdk = {version = "0.2.128", extras = ["otel"]}
 slowapi = "^0.1.9"
 
 # Security floors for transitive dependencies. Each one pinned here is a
