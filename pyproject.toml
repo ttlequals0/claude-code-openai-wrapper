@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "claude-code-openai-wrapper"
-version = "2.9.12"
+version = "2.9.13"
 description = "OpenAI API-compatible wrapper for Claude Code"
 authors = ["Richard Atkinson <richardatk01@gmail.com>"]
 readme = "README.md"
@@ -26,8 +26,8 @@ sse-starlette = "^2.1.3"
 # Content-Length buffers the whole body in memory). 0.0.31 covers all four.
 python-multipart = ">=0.0.31"
 # Pin the SDK exactly; bump deliberately and regenerate poetry.lock in the
-# same commit. 2.9.12: 0.2.110 -> 0.2.127 (latest; allows mcp <2.0.0).
-claude-agent-sdk = {version = "0.2.127", extras = ["otel"]}
+# same commit. 2.9.13: 0.2.127 -> 0.2.128.
+claude-agent-sdk = {version = "0.2.128", extras = ["otel"]}
 slowapi = "^0.1.9"
 
 # Security floors for transitive dependencies. Each one pinned here is a

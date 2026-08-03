@@ -5,7 +5,7 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.9.13] - 2026-07-27
+## [2.9.13] - 2026-08-03
 
 ### Fixed
 
@@ -41,6 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `test_multiple_system_messages_are_joined`. The old test documented the
   overwrite as intended; nothing in the README or this changelog ever claimed
   it was, and it loses caller input.
+- Bumped `claude-agent-sdk` from `0.2.127` to `0.2.128`
+  (`pyproject.toml` + `poetry.lock`), the latest published release,
+  rolling in Dependabot PR #36. The `[otel]` extra is retained.
+  Transitive updates pulled in by the lock regeneration include
+  `pydantic` 2.11.7 -> 2.13.4 and `typing-extensions` 4.14.0 -> 4.16.0.
 
 ## [2.9.12] - 2026-07-24
 
