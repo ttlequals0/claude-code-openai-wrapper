@@ -720,9 +720,7 @@ class MessageAdapter:
         if not system_prompt:
             return prompt, system_prompt
 
-        contract = MessageAdapter.SYSTEM_CONTRACT_TEMPLATE.format(
-            system_prompt=system_prompt
-        )
+        contract = MessageAdapter.SYSTEM_CONTRACT_TEMPLATE.format(system_prompt=system_prompt)
         return contract + prompt, None
 
     @staticmethod

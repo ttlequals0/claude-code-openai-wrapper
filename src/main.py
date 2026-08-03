@@ -996,9 +996,7 @@ async def generate_streaming_response(
         # which the Agent SDK ignores in the system slot. Relocate before the
         # sampling and tool blocks so those still reach the system prompt.
         if _wants_json(request.response_format) and system_prompt:
-            prompt, system_prompt = MessageAdapter.relocate_system_contract(
-                prompt, system_prompt
-            )
+            prompt, system_prompt = MessageAdapter.relocate_system_contract(prompt, system_prompt)
             logger.info("JSON mode (streaming): relocated caller system prompt into user turn")
 
         # Add sampling instructions from temperature/top_p if present

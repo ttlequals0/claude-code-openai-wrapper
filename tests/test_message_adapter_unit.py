@@ -117,7 +117,7 @@ class TestRelocateSystemContract:
 
     def test_system_prompt_moves_to_head_of_user_turn(self):
         prompt, system = MessageAdapter.relocate_system_contract(
-            "Human: analyze this", "Return {\"a\": 1}"
+            "Human: analyze this", 'Return {"a": 1}'
         )
 
         assert system is None
