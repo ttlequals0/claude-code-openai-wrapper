@@ -5,7 +5,11 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.9.13] - 2026-08-03
+## [2.9.14] - 2026-08-03
+
+Supersedes the interim `2.9.13` image, which was built from this branch
+before the formatting fix and the SDK bump below landed. No `2.9.13` release
+reached `main`, so the version is retired rather than rebuilt in place.
 
 ### Fixed
 
@@ -46,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rolling in Dependabot PR #36. The `[otel]` extra is retained.
   Transitive updates pulled in by the lock regeneration include
   `pydantic` 2.11.7 -> 2.13.4 and `typing-extensions` 4.14.0 -> 4.16.0.
+- Reformatted `src/main.py`, `src/message_adapter.py`, and
+  `tests/test_message_adapter_unit.py` with `black`. The CI style gate was
+  failing on all three Python versions.
 
 ## [2.9.12] - 2026-07-24
 
