@@ -438,18 +438,18 @@ files = [
 
 [[package]]
 name = "claude-agent-sdk"
-version = "0.2.128"
+version = "0.2.134"
 description = "Python SDK for Claude Code"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "claude_agent_sdk-0.2.128-py3-none-macosx_11_0_arm64.whl", hash = "sha256:2e47ee95be68cb07612fd5288a40f3307763da5a5adf66d6e03ea49dc0495c9c"},
-    {file = "claude_agent_sdk-0.2.128-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:55e8fa28918af5620f391692efe80527ad9f2294cec14dadeea93c5161dbefc4"},
-    {file = "claude_agent_sdk-0.2.128-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:6c10cc1c5403b2b0b3d8deb79ad5271a8e49b9db6460193599b91f49f16b4cf7"},
-    {file = "claude_agent_sdk-0.2.128-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:cc4a0f20337e227fe16f00edf7cbe109349707adb440fe51ca6c44f9f8d7d21a"},
-    {file = "claude_agent_sdk-0.2.128-py3-none-win_amd64.whl", hash = "sha256:37b87c8e75daa2a6dc74da6d788e0981a2e5e3a6be80cfa4c287abce2bf70e0b"},
-    {file = "claude_agent_sdk-0.2.128.tar.gz", hash = "sha256:2ac7b2b3bc56ae9037fd284c8690d3dafab9493ecd28d8974bba79a418e1b800"},
+    {file = "claude_agent_sdk-0.2.134-py3-none-macosx_11_0_arm64.whl", hash = "sha256:5c44159a4a8640edf2634fa9653c40023ed548e24e3aaac01fc3fad85685ed0e"},
+    {file = "claude_agent_sdk-0.2.134-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:4d4e583bdd834b05f88678948b263e57aa81f20a0817f3d25adfe9d8edb50966"},
+    {file = "claude_agent_sdk-0.2.134-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:f259671f03823e07544b52ed37e29accd295012e7d9304f5b7c1ec6a3508c758"},
+    {file = "claude_agent_sdk-0.2.134-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:0cba177a0f234dcdb8dfcdd46803fbe0aadd42fbc5aebba41f65f9d00d05a420"},
+    {file = "claude_agent_sdk-0.2.134-py3-none-win_amd64.whl", hash = "sha256:e5eb243dc62a6ea624aadb4227eb2d03d40394c9ae8a43cb5a94d8d76cd2def0"},
+    {file = "claude_agent_sdk-0.2.134.tar.gz", hash = "sha256:acac34b8068dfeb8fceeb8e2e3b3684f146da206094e55a5d34115063f2bafba"},
 ]
 
 [package.dependencies]
@@ -3262,4 +3262,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10"
-content-hash = "216d4367264fe83badacf248582a8bf77f42ebc532ae58079e43e654f7d699e4"
+content-hash = "d178c538418f0875c33adaf994acfd6250a6d40e38f0e444522c0a8d5507d981"
