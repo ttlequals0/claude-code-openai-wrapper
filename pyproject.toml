@@ -26,8 +26,9 @@ sse-starlette = "^2.1.3"
 # Content-Length buffers the whole body in memory). 0.0.31 covers all four.
 python-multipart = ">=0.0.31"
 # Pin the SDK exactly; bump deliberately and regenerate poetry.lock in the
-# same commit. 2.9.14: 0.2.127 -> 0.2.128.
-claude-agent-sdk = {version = "0.2.128", extras = ["otel"]}
+# same commit. 2.10.0: 0.2.128 -> 0.2.148. Re-check RateLimitInfo field names
+# on each bump; the wrapper reads them off the message stream.
+claude-agent-sdk = {version = "0.2.148", extras = ["otel"]}
 slowapi = "^0.1.9"
 
 # Security floors for transitive dependencies. Each one pinned here is a
@@ -41,8 +42,8 @@ slowapi = "^0.1.9"
 # - urllib3: httpx 0.27.x pulls via requests/certifi chain
 #   (>=2.7.0 closes GHSA-qccp-gfcp-xxvc proxy redirect header leak and
 #    GHSA-mf9v-mfxr-j63j decompression-bomb safeguard bypass)
-# - cryptography: floor raised to >=48.0.1 to close GHSA-537c-gmf6-5ccf
-#   (vulnerable OpenSSL bundled in cryptography wheels, high). Dependabot #23.
+# - cryptography: >=50.0.0 closes GHSA-g6cj-pr64-35w5 (Dependabot #29) and
+#   supersedes the >=48.0.1 floor for GHSA-537c-gmf6-5ccf (#23).
 # - PyJWT: floor raised to >=2.13.0 to close five alerts (#14-18), incl.
 #   GHSA-xgmm-8j9v-c9wx (public-key JWK accepted as HMAC secret -> forged
 #   HS256 tokens, high) and the PyJWKClient SSRF / DoS issues.
@@ -55,7 +56,7 @@ slowapi = "^0.1.9"
 # - nltk: >=3.10.0 closes Dependabot #24 (GHSA-p4gq-832x-fm9v)
 starlette = ">=1.0.1"
 urllib3 = ">=2.7.0"
-cryptography = ">=48.0.1"
+cryptography = ">=50.0.0"
 pyjwt = ">=2.13.0"
 joserfc = ">=1.6.7"
 authlib = ">=1.6.9"
