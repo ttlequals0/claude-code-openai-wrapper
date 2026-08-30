@@ -2,6 +2,7 @@ import os
 import tempfile
 import atexit
 import shutil
+import time
 from typing import AsyncGenerator, Dict, Any, Optional, List
 from pathlib import Path
 import logging
@@ -92,6 +93,10 @@ class ClaudeResultError(Exception):
         super().__init__(f"Claude SDK returned {subtype} after {num_turns} turns: {detail}")
 
 
+# Ceiling on how long an in-request retry will wait for a quota reset.
+_MAX_INLINE_RETRY_AFTER_SECONDS = 60
+
+
 class ClaudeCodeCLI:
     def __init__(self, timeout: int = 600000, cwd: Optional[str] = None):
         self.timeout = timeout / 1000  # Convert ms to seconds
@@ -166,6 +171,21 @@ class ClaudeCodeCLI:
 
         logger.info("Claude Agent SDK verified successfully")
         return True
+
+    def _quota_retry_after(self) -> Optional[float]:
+        """Seconds until the quota resets, bounded, or None if not blocked.
+
+        Bounded because a rejected window can reset hours out and this runs
+        inside a live request; the full reset reaches the caller in
+        Retry-After instead of holding the connection open.
+        """
+        resets_at = quota_tracker.blocked_until()
+        if not resets_at:
+            return None
+        remaining = resets_at - time.time()
+        if remaining <= 0:
+            return None
+        return min(remaining, _MAX_INLINE_RETRY_AFTER_SECONDS)
 
     async def run_completion(
         self,
@@ -309,7 +329,11 @@ class ClaudeCodeCLI:
 
                     except Exception as query_error:
                         error_str = str(query_error)
-                        status_code = getattr(query_error, "status_code", None)
+                        status_code = getattr(
+                            query_error,
+                            "status_code",
+                            getattr(query_error, "api_error_status", None),
+                        )
 
                         retry_state.record_attempt(status_code)
 
@@ -321,7 +345,11 @@ class ClaudeCodeCLI:
                                 options.model = current_model
 
                         if retry_state.should_retry(status_code=status_code, error=query_error):
-                            await retry_delay(retry_state)
+                            # Honour the upstream reset when we know it;
+                            # calculate_delay takes the larger of it and the
+                            # backoff. Previously never supplied, so a known
+                            # reset time had nowhere to go.
+                            await retry_delay(retry_state, self._quota_retry_after())
                             continue
 
                         raise  # Not retryable, propagate

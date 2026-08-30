@@ -901,16 +901,48 @@ def _safe_assistant_error_message(subtype: Optional[str]) -> str:
     return _ASSISTANT_ERROR_MESSAGE.get(subtype or "", "Upstream request failed")
 
 
+# Ceiling on Retry-After. A rejected seven_day window can reset days out, and
+# a client that honours the header verbatim would sleep through the whole
+# window; the true reset is in the body for callers that want it.
+_MAX_RETRY_AFTER_SECONDS = 3600
+_DEFAULT_RETRY_AFTER_SECONDS = 30
+
+
+def _retry_after_seconds(resets_at: Optional[int]) -> int:
+    """Seconds to wait, from the upstream reset time when one was reported."""
+    if not resets_at:
+        return _DEFAULT_RETRY_AFTER_SECONDS
+    return max(1, min(int(resets_at - time.time()), _MAX_RETRY_AFTER_SECONDS))
+
+
+def _rate_limit_detail(err: ClaudeResultError) -> Dict[str, Any]:
+    """Reset fields for a 429 body. Empty when no reset time was reported."""
+    resets_at = getattr(err, "resets_at", None)
+    if not resets_at:
+        return {}
+    return {
+        "rate_limit_type": getattr(err, "rate_limit_type", None),
+        "resets_at": resets_at,
+        "resets_at_iso": datetime.fromtimestamp(resets_at, tz=timezone.utc).isoformat(),
+        "seconds_until_reset": max(0, int(resets_at - time.time())),
+    }
+
+
 def _build_assistant_error_response(
     request_id: str, model: str, err: ClaudeResultError
 ) -> JSONResponse:
     """Translate an AssistantMessage error to a status-coded OpenAI error."""
     status = _ASSISTANT_ERROR_STATUS.get(err.subtype or "", 502)
     headers = None
+    body = {
+        "message": _safe_assistant_error_message(err.subtype),
+        "type": "upstream_api_error",
+        "code": err.subtype or "unknown",
+    }
     if status == 429:
-        # Conservative default. Callers that want a smarter backoff should
-        # inspect upstream rate-limit headers once the SDK exposes them.
-        headers = {"Retry-After": "30"}
+        retry_after = _retry_after_seconds(getattr(err, "resets_at", None))
+        headers = {"Retry-After": str(retry_after)}
+        body.update(_rate_limit_detail(err))
     logger.warning(
         _kv(
             "claude_sdk_assistant_error",
@@ -920,17 +952,7 @@ def _build_assistant_error_response(
             status=status,
         )
     )
-    return JSONResponse(
-        status_code=status,
-        headers=headers,
-        content={
-            "error": {
-                "message": _safe_assistant_error_message(err.subtype),
-                "type": "upstream_api_error",
-                "code": err.subtype or "unknown",
-            }
-        },
-    )
+    return JSONResponse(status_code=status, headers=headers, content={"error": body})
 
 
 def _handle_claude_result_error(
@@ -1377,19 +1399,24 @@ async def generate_streaming_response(
                         errors=sdk_error.errors,
                     )
                 )
-                err_payload = {
-                    "error": {
-                        "message": sdk_error.error_message
-                        or (
-                            sdk_error.errors[0]
-                            if sdk_error.errors
-                            else f"SDK returned {sdk_error.subtype}"
-                        ),
-                        "type": "upstream_sdk_error",
-                        "code": sdk_error.subtype or "unknown",
-                    }
+                err_body = {
+                    "message": sdk_error.error_message
+                    or (
+                        sdk_error.errors[0]
+                        if sdk_error.errors
+                        else f"SDK returned {sdk_error.subtype}"
+                    ),
+                    "type": "upstream_sdk_error",
+                    "code": sdk_error.subtype or "unknown",
                 }
-                yield f"data: {json.dumps(err_payload)}\n\n"
+                # The status line is already flushed, so the reset time can
+                # only travel in the body. Without it a streaming caller has
+                # no way to tell a rate limit from a transport failure.
+                if sdk_error.subtype == "assistant_rate_limit":
+                    err_body["type"] = "upstream_rate_limit"
+                    err_body.update(_rate_limit_detail(sdk_error))
+                    err_body["retry_after"] = _retry_after_seconds(sdk_error.resets_at)
+                yield f"data: {json.dumps({'error': err_body})}\n\n"
                 yield "data: [DONE]\n\n"
             return
 
@@ -1875,6 +1902,24 @@ async def anthropic_messages(
                     content=[AnthropicTextBlock(text="")],
                     stop_reason="max_tokens",
                     usage=AnthropicUsage(input_tokens=0, output_tokens=0),
+                )
+            # A rate limit is retryable and must not collapse to 502, which
+            # tells the Anthropic SDK the upstream is broken rather than busy.
+            # JSONResponse, not HTTPException: the global handler rewrites
+            # detail bodies to error.type=api_error.
+            if err.subtype == "assistant_rate_limit":
+                detail = _rate_limit_detail(err)
+                return JSONResponse(
+                    status_code=429,
+                    headers={"Retry-After": str(_retry_after_seconds(err.resets_at))},
+                    content={
+                        "type": "error",
+                        "error": {
+                            "type": "rate_limit_error",
+                            "message": _safe_assistant_error_message(err.subtype),
+                            **detail,
+                        },
+                    },
                 )
             raise HTTPException(
                 status_code=502,
