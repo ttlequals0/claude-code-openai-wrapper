@@ -4,10 +4,12 @@ OpenAI API-compatible wrapper for Claude Code. Drop it in front of any OpenAI cl
 
 ## Version
 
-**Current:** 2.9.12
+**Current:** 2.10.0
 
 Highlights of recent releases (full history in [CHANGELOG.md](./CHANGELOG.md)):
 
+- **2.10.0** - Quota visibility and correct rate-limit semantics. New `GET /v1/usage` reports per-window quota (`five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`, `overage`) with utilization, status and reset time, read from the SDK's `RateLimitEvent` rather than a proxy. **Fixes a 13.5-hour production outage on 2026-08-30 where a subscription usage limit was reported to every caller as HTTP 401 `authentication_error`**; only a genuine auth failure gates with 401 now. `Retry-After` is derived from the upstream reset instead of a hardcoded 30s, `/v1/messages` no longer collapses a rate limit to 502, and opt-in 429 enforcement is available via `WRAPPER_QUOTA_ENFORCEMENT_ENABLED`. `claude-agent-sdk` 0.2.128 -> 0.2.148, `cryptography` floor >=50.0.0 (Dependabot #29). pip removed from the runtime image, clearing the last two language-package trivy findings.
+- **2.9.14** - JSON mode relocates the caller's system prompt into the user turn, because the Agent SDK treats `options.system_prompt` as a persona rather than binding instructions. Multiple system messages are joined instead of collapsing to the last one. `claude-agent-sdk` 0.2.127 -> 0.2.128.
 - **2.9.12** - Added `claude-opus-5` (Opus 5, $5/$25 MTok, 1M context / 128K max output) to the model catalogue. `claude-agent-sdk` 0.2.110 -> 0.2.127. Security floors raised: `mcp` >=1.28.1 (closes three high alerts #26-28) and `nltk` >=3.10.0 (closes #24, previously accepted risk - fix now shipped). Deep health probe no longer returns exception messages to clients (CodeQL py/stack-trace-exposure).
 - **2.9.11** - Added `claude-sonnet-5` (new balanced flagship, $3/$15 MTok, 1M context / 128K max output) and `claude-fable-5` (Anthropic's most capable widely released model, $10/$50 MTok) to the model catalogue; `DEFAULT_MODEL_FALLBACK` moved to `claude-sonnet-5`. `claude-agent-sdk` 0.2.93 -> 0.2.110. Security floors raised to close 11 Dependabot alerts: `cryptography` >=48.0.1 (#23), `pyjwt` >=2.13.0 (#14-18), `python-multipart` >=0.0.31 (#19-22), new `joserfc` >=1.6.7 (#25). The nltk alert (#24) has no upstream fix yet and is documented as accepted risk.
 - **2.9.10** - `claude-agent-sdk` 0.2.87 -> 0.2.93. Raised the `starlette` floor to `>=1.0.1` (resolves to 1.3.1) to close `GHSA-86qp-5c8j-p5mr` (Host-header path poisoning, Dependabot #13), which required raising the `fastapi` floor to `>=0.133.1` (resolves to 0.137.0) since fastapi `<=0.132.x` caps starlette below 1.0.
@@ -23,7 +25,7 @@ Highlights of recent releases (full history in [CHANGELOG.md](./CHANGELOG.md)):
 
 ## Status
 
-Production ready. **673 tests passing (31 skipped)**. Streaming works. Sessions work. JSON mode works. Function calling works. Tools are off by default for speed - pass `enable_tools: true` to turn them on. Auth supports API key, Bedrock, Vertex AI, and CLI.
+Production ready. **730 tests passing (31 skipped)**. Streaming works. Sessions work. JSON mode works. Function calling works. Tools are off by default for speed - pass `enable_tools: true` to turn them on. Auth supports API key, Bedrock, Vertex AI, and CLI.
 
 ## Quick Start
 
@@ -195,7 +197,11 @@ Listed in roughly the order you will reach for them.
 | `ANTHROPIC_MODELS_URL` | Override the live models endpoint. Point at a proxy or staging URL during testing. | `https://api.anthropic.com/v1/models` |
 | `ANTHROPIC_VERSION` | `anthropic-version` header sent to the Models API. | `2023-06-01` |
 | `ANTHROPIC_BETA` / `ANTHROPIC_BETA_HEADER` | Optional `anthropic-beta` header forwarded to the Models API for beta-gated features. | - |
-| `CLI_AUTH_PROBE_INTERVAL_SECONDS` | Background CLI-auth probe cadence when `CLAUDE_AUTH_METHOD=claude_cli`. Each probe is a 1-turn `query` (~$0.001 at Sonnet pricing); a failure flips `cli_health.ok` so `/v1/chat/completions` and `/v1/messages` return 401 instead of letting the SDK fail loudly. Set `0` to disable. Ignored for non-cli auth methods. | `600` (10 min) |
+| `CLI_AUTH_PROBE_INTERVAL_SECONDS` | Background CLI-auth probe cadence when `CLAUDE_AUTH_METHOD=claude_cli`. Each probe is a 1-turn `query` (~$0.001 at Sonnet pricing); a failure classified as `auth_failure` flips `cli_health.ok` so `/v1/chat/completions` and `/v1/messages` return 401 instead of letting the SDK fail loudly. Failures classified as `quota_exhausted` or `unknown` do **not** gate with 401. Set `0` to disable. Ignored for non-cli auth methods. | `600` (10 min) |
+| `WRAPPER_QUOTA_ENFORCEMENT_ENABLED` | Refuse requests with 429 while a quota window is `rejected`, instead of forwarding a doomed call. Off by default because refusing is a behaviour change; the accurate `Retry-After` on real upstream rejections ships either way. | `false` |
+| `WRAPPER_QUOTA_PROBE_EVERY_N_REQUESTS` | Requests between quota refresh probes. A probe is a real 1-turn inference call, since the bundled CLI has no `usage` subcommand, so it spends the quota it measures. Set `0` to rely on passive capture alone. | `100` |
+| `WRAPPER_QUOTA_PROBE_MIN_INTERVAL_SECONDS` | Floor between quota probes so a burst cannot trigger a run of them. | `300` (5 min) |
+| `WRAPPER_QUOTA_STALE_AFTER_SECONDS` | Age at which a `/v1/usage` window reading is flagged `stale`. | `900` (15 min) |
 | `DEBUG_MODE` | Enable debug logging and unlock `/v1/debug/request` | `false` |
 | `VERBOSE` | Same unlock effect on `/v1/debug/request` | `false` |
 | `CORS_ORIGINS` | Allowed CORS origins (JSON array) | `["*"]` |
@@ -395,7 +401,8 @@ See `examples/session_continuity.py` for Python and curl examples.
 |----------|--------|-------------|
 | `/v1/cache/stats` | GET | Cache statistics |
 | `/v1/cache/clear` | POST | Clear request cache |
-| `/v1/auth/status` | GET | Auth status |
+| `/v1/auth/status` | GET | Auth status, including `cli_health` and a `quota` summary |
+| `/v1/usage` | GET | Claude subscription quota per rate-limit window: status, utilization, reset time, staleness |
 | `/v1/compatibility` | POST | Parameter compatibility check |
 | `/v1/debug/request` | POST | Request debugging; **emits only `{"enabled": false}` unless `DEBUG_MODE` or `VERBOSE` is set** |
 | `/health` | GET | Liveness probe (no upstream call) |
@@ -461,7 +468,7 @@ In either JSON mode the wrapper moves your system prompt to the front of the use
 ## Testing
 
 ```bash
-# Run the full test suite (673 tests, ~3 s on a laptop)
+# Run the full test suite (730 tests, ~8 s on a laptop)
 poetry run pytest tests/
 
 # Quick endpoint test (server must be running)
