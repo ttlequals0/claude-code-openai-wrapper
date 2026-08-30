@@ -5,6 +5,48 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.1] - 2026-08-30
+
+### Fixed
+
+- `/v1/usage` reported no `seven_day` window and a null `utilization` for
+  every window. Both came from reading only the fields the SDK models.
+
+  `RateLimitInfo` exposes the representative window plus the overage pool,
+  but the CLI sends every window under `raw["unifiedWindows"]`, and that is
+  the **only** place utilization appears; there is no top-level utilization
+  field. Observed payload from production:
+
+  ```json
+  {"status": "allowed", "rateLimitType": "five_hour", "resetsAt": 1788145200,
+   "overageStatus": "rejected", "overageDisabledReason": "org_level_disabled",
+   "unifiedWindows": {"five_hour": {"utilization": 0.29, "resetsAt": 1788145200},
+                      "seven_day": {"utilization": 0.05, "resetsAt": 1788732000}}}
+  ```
+
+  This mattered more than a missing field. The 2026-08-30 outage ran 13h26m,
+  far longer than a five-hour window can account for, so the weekly cap is
+  the likely cause and `seven_day` was exactly the window not being reported.
+
+  Every window in `unifiedWindows` is now recorded with its own utilization
+  and reset time. `status` is set only on the window the CLI names as
+  representative, since the payload carries no per-window status and
+  inferring one from utilization would be inventing data. Each window gains a
+  `representative` flag.
+
+- A rejected overage pool looked like a quota problem. `overage` now carries
+  `disabled_reason`, so `org_level_disabled` is visible as the ordinary
+  configuration it is rather than reading as an outage.
+
+### Added
+
+- `closest_to_limit` in the `/v1/usage` payload names the window nearest its
+  cap with its utilization and reset time. That is not always the window the
+  CLI names, and it is the number an operator actually wants: how close am I
+  to being cut off, and when does it clear.
+
+- `binding_window` names the window the CLI reported as representative.
+
 ## [2.10.0] - 2026-08-30
 
 ### Fixed
