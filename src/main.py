@@ -89,6 +89,7 @@ from src.constants import (
     SESSION_CLEANUP_INTERVAL_MINUTES,
 )
 from src.model_service import model_service
+from src.quota_tracker import quota_tracker
 from src.request_cache import request_cache
 from src.cost_tracker import cost_tracker, UsageRecord
 
@@ -2883,6 +2884,7 @@ async def get_auth_status(request: Request):
     return {
         "claude_code_auth": auth_info,
         "cli_health": _auth.cli_health.as_dict(),
+        "quota": quota_tracker.snapshot(),
         "server_info": {
             "api_key_required": bool(active_api_key),
             "api_key_source": (
@@ -2893,6 +2895,22 @@ async def get_auth_status(request: Request):
             "version": "1.0.0",
         },
     }
+
+
+@app.get("/v1/usage")
+@rate_limit_endpoint("general")
+async def get_usage(
+    request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+):
+    """Report the Claude subscription quota the CLI last told us about.
+
+    Per window (five_hour, seven_day, seven_day_opus, seven_day_sonnet,
+    overage): status, utilization, reset time, and whether the reading is
+    stale. Windows appear only once the CLI has reported them, so an idle
+    wrapper returns an empty set rather than a guess.
+    """
+    await verify_api_key(request, credentials)
+    return quota_tracker.snapshot()
 
 
 @app.get("/v1/sessions/stats")
