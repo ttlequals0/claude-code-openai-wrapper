@@ -6,8 +6,9 @@ from typing import AsyncGenerator, Dict, Any, Optional, List
 from pathlib import Path
 import logging
 
-from claude_agent_sdk import query, ClaudeAgentOptions
+from claude_agent_sdk import query, ClaudeAgentOptions, RateLimitEvent
 
+from src.quota_tracker import quota_tracker
 from src.retry import RetryState, retry_delay
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,8 @@ class ClaudeResultError(Exception):
         stop_reason: Optional[str] = None,
         error_message: Optional[str] = None,
         stderr_tail: Optional[str] = None,
+        resets_at: Optional[int] = None,
+        rate_limit_type: Optional[str] = None,
     ):
         self.subtype = subtype
         self.num_turns = num_turns
@@ -82,6 +85,9 @@ class ClaudeResultError(Exception):
         self.stop_reason = stop_reason
         self.error_message = error_message
         self.stderr_tail = stderr_tail
+        # Set only for rate-limit results; drives a real Retry-After.
+        self.resets_at = resets_at
+        self.rate_limit_type = rate_limit_type
         detail = error_message or (self.errors[0] if self.errors else subtype)
         super().__init__(f"Claude SDK returned {subtype} after {num_turns} turns: {detail}")
 
@@ -151,6 +157,8 @@ class ClaudeCodeCLI:
             ),
         ):
             messages.append(message)
+            if isinstance(message, RateLimitEvent):
+                quota_tracker.record(message.rate_limit_info, source="probe")
 
         if not messages:
             logger.warning("Claude Agent SDK test returned no messages")
@@ -249,6 +257,13 @@ class ClaudeCodeCLI:
                         async for message in query(prompt=prompt, options=options):
                             logger.debug(f"Raw SDK message type: {type(message)}")
                             logger.debug(f"Raw SDK message: {message}")
+
+                            # Read quota state off the typed dataclass, before
+                            # the reflection below flattens it. Every consumer
+                            # (streaming, non-streaming, /v1/messages, deep
+                            # health) reaches the SDK through this one loop.
+                            if isinstance(message, RateLimitEvent):
+                                quota_tracker.record(message.rate_limit_info)
 
                             if hasattr(message, "__dict__") and not isinstance(message, dict):
                                 message_dict = {}
@@ -380,25 +395,28 @@ class ClaudeCodeCLI:
                     error_message=None,
                 )
 
-        # RateLimitInfo messages (SDK 0.1.49+): emitted by the CLI when the
-        # rate-limit state changes. If status is 'rejected', the upstream has
-        # cut us off and callers should back off rather than consume the
-        # partial response.
+        # Rate-limit events: status 'rejected' means the upstream cut us off,
+        # so back off rather than consume the partial response. The event
+        # nests its fields under rate_limit_info; the previous check looked
+        # for them at the top level and so never fired.
         for message in messages:
-            if (
-                isinstance(message, dict)
-                and message.get("status") == "rejected"
-                and "resets_at" in message
-                and "rate_limit_type" in message
-            ):
-                resets_at = message.get("resets_at")
-                raise ClaudeResultError(
-                    subtype="assistant_rate_limit",
-                    num_turns=None,
-                    errors=["rate_limit"],
-                    stop_reason=None,
-                    error_message=f"upstream rate_limit ({message.get('rate_limit_type')}); resets_at={resets_at}",
-                )
+            info = message.get("rate_limit_info") if isinstance(message, dict) else None
+            if info is None:
+                continue
+            get = info.get if isinstance(info, dict) else lambda k: getattr(info, k, None)
+            if get("status") != "rejected":
+                continue
+            resets_at = get("resets_at")
+            rate_limit_type = get("rate_limit_type")
+            raise ClaudeResultError(
+                subtype="assistant_rate_limit",
+                num_turns=None,
+                errors=["rate_limit"],
+                stop_reason=None,
+                error_message=f"upstream rate_limit ({rate_limit_type}); resets_at={resets_at}",
+                resets_at=resets_at,
+                rate_limit_type=rate_limit_type,
+            )
 
         # Prefer ResultMessage.result (multi-turn completion).
         for message in messages:
