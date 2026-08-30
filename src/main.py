@@ -89,7 +89,12 @@ from src.constants import (
     SESSION_CLEANUP_INTERVAL_MINUTES,
 )
 from src.model_service import model_service
-from src.quota_tracker import quota_tracker
+from src.quota_tracker import (
+    probe_every_n_requests,
+    probe_min_interval_seconds,
+    quota_enforcement_enabled,
+    quota_tracker,
+)
 from src.request_cache import request_cache
 from src.cost_tracker import cost_tracker, UsageRecord
 
@@ -528,6 +533,30 @@ async def lifespan(app: FastAPI):
 
     cli_auth_probe_task = asyncio.get_running_loop().create_task(cli_auth_probe_loop())
 
+    # Quota refresh, triggered by request volume rather than the clock. The
+    # auth probe above already refreshes quota on its fixed cadence; this
+    # catches the case where traffic burns through a window faster than that
+    # interval. Reuses probe_cli_auth, whose verify_cli call records the
+    # rate-limit event. The sleep is the floor between probes.
+    async def quota_probe_loop():
+        every_n = probe_every_n_requests()
+        if every_n <= 0:
+            logger.info("quota_probe disabled (every_n=%s)", every_n)
+            return
+        interval = probe_min_interval_seconds()
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                if _auth.auth_manager.auth_method != "claude_cli":
+                    continue
+                if not quota_tracker.probe_due(every_n):
+                    continue
+                await _auth.probe_cli_auth()
+        except asyncio.CancelledError:
+            pass
+
+    quota_probe_task = asyncio.get_running_loop().create_task(quota_probe_loop())
+
     # Start CPU watchdog (Linux/Docker only)
     cpu_watchdog.start()
 
@@ -536,6 +565,7 @@ async def lifespan(app: FastAPI):
     cpu_watchdog.stop()
     cost_cleanup_task.cancel()
     cli_auth_probe_task.cancel()
+    quota_probe_task.cancel()
 
     # Cleanup on shutdown
     logger.info("Shutting down session manager...")
@@ -1458,6 +1488,40 @@ async def generate_streaming_response(
         yield f"data: {json.dumps(error_chunk)}\n\n"
 
 
+def _check_quota_or_429() -> Optional[JSONResponse]:
+    """Refuse the request while the upstream quota is exhausted.
+
+    Opt-in via WRAPPER_QUOTA_ENFORCEMENT_ENABLED. When off, the request is
+    forwarded and the upstream rejection is translated to a 429 on the way
+    back; when on, the doomed round-trip is skipped. Either way the caller
+    gets 429 and a reset time, never a 401.
+    """
+    quota_tracker.note_request()
+    if not quota_enforcement_enabled():
+        return None
+
+    resets_at = quota_tracker.blocked_until()
+    if resets_at is None:
+        return None
+
+    snapshot = quota_tracker.snapshot()
+    logger.warning(_kv("quota_exhausted_block", resets_at=resets_at))
+    return JSONResponse(
+        status_code=429,
+        headers={"Retry-After": str(_retry_after_seconds(resets_at))},
+        content={
+            "error": {
+                "message": "Upstream quota is exhausted. Retry after the window resets.",
+                "type": "rate_limit_exceeded",
+                "code": "upstream_quota_exhausted",
+                "resets_at": snapshot["blocked_until"],
+                "resets_at_iso": snapshot["blocked_until_iso"],
+                "seconds_until_reset": snapshot["seconds_until_reset"],
+            }
+        },
+    )
+
+
 def _check_cli_auth_or_401() -> Optional[JSONResponse]:
     """Gate request handlers on the latest CLI-auth probe + the auth manager.
 
@@ -1537,6 +1601,11 @@ async def chat_completions(
     auth_block = _check_cli_auth_or_401()
     if auth_block is not None:
         return auth_block
+
+    # Quota gate. Counts the request for probe cadence either way.
+    quota_block = _check_quota_or_429()
+    if quota_block is not None:
+        return quota_block
 
     # Circuit breaker check: if the SDK has been failing at >50% for a minute,
     # fail-fast with 503 instead of forwarding another doomed request. The
@@ -1847,6 +1916,11 @@ async def anthropic_messages(
     auth_block = _check_cli_auth_or_401()
     if auth_block is not None:
         return auth_block
+
+    # Quota gate. Counts the request for probe cadence either way.
+    quota_block = _check_quota_or_429()
+    if quota_block is not None:
+        return quota_block
 
     try:
         logger.info(f"Anthropic Messages API request: model={request_body.model}")

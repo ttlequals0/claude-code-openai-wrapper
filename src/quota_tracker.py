@@ -30,6 +30,12 @@ OVERAGE = "overage"
 # Windows go stale when traffic is quiet and no event has arrived.
 _DEFAULT_STALE_AFTER_SECONDS = 900
 
+# Refresh cadence. The bundled CLI has no usage subcommand, so a probe is a
+# real inference call that spends the quota it measures: hence a request-count
+# trigger with a time floor, rather than a plain interval.
+_DEFAULT_PROBE_EVERY_N_REQUESTS = 100
+_DEFAULT_PROBE_MIN_INTERVAL_SECONDS = 300
+
 
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name)
@@ -39,6 +45,32 @@ def _env_int(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("true", "1", "yes", "on")
+
+
+def quota_enforcement_enabled() -> bool:
+    """Whether to refuse requests with 429 while a window is rejected.
+
+    Off by default: refusing is a behaviour change for existing callers, and
+    the accurate Retry-After on real upstream rejections ships either way.
+    """
+    return _env_bool("WRAPPER_QUOTA_ENFORCEMENT_ENABLED", False)
+
+
+def probe_every_n_requests() -> int:
+    """Requests between refresh probes. 0 disables probing."""
+    return _env_int("WRAPPER_QUOTA_PROBE_EVERY_N_REQUESTS", _DEFAULT_PROBE_EVERY_N_REQUESTS)
+
+
+def probe_min_interval_seconds() -> int:
+    """Floor between probes, so a burst cannot trigger a run of them."""
+    return _env_int("WRAPPER_QUOTA_PROBE_MIN_INTERVAL_SECONDS", _DEFAULT_PROBE_MIN_INTERVAL_SECONDS)
 
 
 def _iso(unix_seconds: Optional[float]) -> Optional[str]:
@@ -88,6 +120,7 @@ class QuotaTracker:
     def __init__(self, stale_after_seconds: int | None = None) -> None:
         self._lock = threading.Lock()
         self._windows: Dict[str, QuotaWindow] = {}
+        self._requests_since_probe = 0
         self._stale_after = (
             stale_after_seconds
             if stale_after_seconds is not None
@@ -133,6 +166,21 @@ class QuotaTracker:
             self._windows[rate_limit_type] = window
             if overage is not None:
                 self._windows[OVERAGE] = overage
+
+    def note_request(self) -> None:
+        """Count a request towards the next refresh probe."""
+        with self._lock:
+            self._requests_since_probe += 1
+
+    def probe_due(self, every_n: int) -> bool:
+        """True, and resets the counter, once every_n requests have passed."""
+        if every_n <= 0:
+            return False
+        with self._lock:
+            if self._requests_since_probe < every_n:
+                return False
+            self._requests_since_probe = 0
+            return True
 
     def blocked_until(self) -> Optional[int]:
         """Unix reset time of the binding rejected window, else None.
