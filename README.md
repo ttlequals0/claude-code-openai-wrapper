@@ -8,7 +8,7 @@ OpenAI API-compatible wrapper for Claude Code. Drop it in front of any OpenAI cl
 
 Highlights of recent releases (full history in [CHANGELOG.md](./CHANGELOG.md)):
 
-- **2.10.0** - Quota visibility and correct rate-limit semantics. New `GET /v1/usage` reports per-window quota (`five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`, `overage`) with utilization, status and reset time, read from the SDK's `RateLimitEvent` rather than a proxy. **Fixes a 13.5-hour production outage on 2026-08-30 where a subscription usage limit was reported to every caller as HTTP 401 `authentication_error`**; only a genuine auth failure gates with 401 now. `Retry-After` is derived from the upstream reset instead of a hardcoded 30s, `/v1/messages` no longer collapses a rate limit to 502, and opt-in 429 enforcement is available via `WRAPPER_QUOTA_ENFORCEMENT_ENABLED`. `claude-agent-sdk` 0.2.128 -> 0.2.148, `cryptography` floor >=50.0.0 (Dependabot #29). pip removed from the runtime image, clearing the last two language-package trivy findings.
+- **2.10.0** - Fixed a 13.5-hour outage on 2026-08-30 where a subscription usage limit was reported to every caller as HTTP 401 `authentication_error`. Only a genuine auth failure returns 401 now. New `GET /v1/usage` reports quota per rate-limit window, read from the SDK's `RateLimitEvent` instead of a proxy. `Retry-After` comes from the upstream reset rather than a hardcoded 30s, `/v1/messages` stops collapsing a rate limit to 502, and `WRAPPER_QUOTA_ENFORCEMENT_ENABLED` adds opt-in 429 blocking. `claude-agent-sdk` 0.2.128 -> 0.2.148, `cryptography` floor >=50.0.0 (Dependabot #29). pip removed from the runtime image, clearing the last two language-package trivy findings.
 - **2.9.14** - JSON mode relocates the caller's system prompt into the user turn, because the Agent SDK treats `options.system_prompt` as a persona rather than binding instructions. Multiple system messages are joined instead of collapsing to the last one. `claude-agent-sdk` 0.2.127 -> 0.2.128.
 - **2.9.12** - Added `claude-opus-5` (Opus 5, $5/$25 MTok, 1M context / 128K max output) to the model catalogue. `claude-agent-sdk` 0.2.110 -> 0.2.127. Security floors raised: `mcp` >=1.28.1 (closes three high alerts #26-28) and `nltk` >=3.10.0 (closes #24, previously accepted risk - fix now shipped). Deep health probe no longer returns exception messages to clients (CodeQL py/stack-trace-exposure).
 - **2.9.11** - Added `claude-sonnet-5` (new balanced flagship, $3/$15 MTok, 1M context / 128K max output) and `claude-fable-5` (Anthropic's most capable widely released model, $10/$50 MTok) to the model catalogue; `DEFAULT_MODEL_FALLBACK` moved to `claude-sonnet-5`. `claude-agent-sdk` 0.2.93 -> 0.2.110. Security floors raised to close 11 Dependabot alerts: `cryptography` >=48.0.1 (#23), `pyjwt` >=2.13.0 (#14-18), `python-multipart` >=0.0.31 (#19-22), new `joserfc` >=1.6.7 (#25). The nltk alert (#24) has no upstream fix yet and is documented as accepted risk.
@@ -85,7 +85,7 @@ Edit `.env`:
 PORT=8000
 MAX_TIMEOUT=600000           # milliseconds (10 min default)
 # CLAUDE_CWD=/path/to/workspace   # defaults to isolated temp dir
-# DEFAULT_MODEL=claude-sonnet-4-6  # override default model
+# DEFAULT_MODEL=claude-sonnet-5   # override default model
 ```
 
 ### Working Directory
@@ -136,7 +136,7 @@ docker run -d -p 8000:8000 \
 docker run -d -p 8000:8000 \
   -v ~/.claude:/root/.claude \
   --name claude-wrapper \
-  ttlequals0/claude-code-openai-wrapper:2.9.6
+  ttlequals0/claude-code-openai-wrapper:2.10.0
 
 # Or build locally (prod stage is the default target)
 docker build --platform linux/amd64 -t claude-wrapper:local .
@@ -183,12 +183,12 @@ Listed in roughly the order you will reach for them.
 | `CLAUDE_CWD` | Working directory Claude Code runs in | isolated temp dir |
 | `CLAUDE_AUTH_METHOD` | `cli`, `api_key`, `bedrock`, `vertex` | auto-detect |
 | `API_KEY` | Require this key on every request; prompts at startup if unset | interactive prompt |
-| `ANTHROPIC_API_KEY` | Direct API key (for `api_key` auth). Optional — also unlocks live `/v1/models` discovery and dynamic latest-Sonnet default. | - |
+| `ANTHROPIC_API_KEY` | Direct API key (for `api_key` auth). Optional; also unlocks live `/v1/models` discovery and dynamic latest-Sonnet default. | - |
 | `CLAUDE_CODE_USE_BEDROCK` | Enable AWS Bedrock backend | `false` |
 | `AWS_REGION` / `AWS_DEFAULT_REGION` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Bedrock credentials | - |
 | `CLAUDE_CODE_USE_VERTEX` | Enable Google Vertex AI backend | `false` |
 | `ANTHROPIC_VERTEX_PROJECT_ID` / `CLOUD_ML_REGION` / `GOOGLE_APPLICATION_CREDENTIALS` | Vertex credentials | - |
-| `DEFAULT_MODEL` | Default model id when request omits one. When unset and `ANTHROPIC_API_KEY` is configured, the wrapper resolves the latest Sonnet at startup; otherwise falls back to `claude-sonnet-4-6`. | auto |
+| `DEFAULT_MODEL` | Default model id when request omits one. When unset and `ANTHROPIC_API_KEY` is configured, the wrapper resolves the latest Sonnet at startup; otherwise falls back to `claude-sonnet-5`. | auto |
 | `FAST_MODEL` | Speed/cost-optimized model alias used internally. | `claude-haiku-4-5-20251001` |
 | `CLAUDE_MODELS_OVERRIDE` | Comma-separated model IDs to advertise via `/v1/models`. Takes precedence over both live and static lists. | - |
 | `MODEL_LIST_CACHE_TTL_SECONDS` | Cache TTL for live `/v1/models` results. | `3600` |
@@ -197,9 +197,9 @@ Listed in roughly the order you will reach for them.
 | `ANTHROPIC_MODELS_URL` | Override the live models endpoint. Point at a proxy or staging URL during testing. | `https://api.anthropic.com/v1/models` |
 | `ANTHROPIC_VERSION` | `anthropic-version` header sent to the Models API. | `2023-06-01` |
 | `ANTHROPIC_BETA` / `ANTHROPIC_BETA_HEADER` | Optional `anthropic-beta` header forwarded to the Models API for beta-gated features. | - |
-| `CLI_AUTH_PROBE_INTERVAL_SECONDS` | Background CLI-auth probe cadence when `CLAUDE_AUTH_METHOD=claude_cli`. Each probe is a 1-turn `query` (~$0.001 at Sonnet pricing); a failure classified as `auth_failure` flips `cli_health.ok` so `/v1/chat/completions` and `/v1/messages` return 401 instead of letting the SDK fail loudly. Failures classified as `quota_exhausted` or `unknown` do **not** gate with 401. Set `0` to disable. Ignored for non-cli auth methods. | `600` (10 min) |
-| `WRAPPER_QUOTA_ENFORCEMENT_ENABLED` | Refuse requests with 429 while a quota window is `rejected`, instead of forwarding a doomed call. Off by default because refusing is a behaviour change; the accurate `Retry-After` on real upstream rejections ships either way. | `false` |
-| `WRAPPER_QUOTA_PROBE_EVERY_N_REQUESTS` | Requests between quota refresh probes. A probe is a real 1-turn inference call, since the bundled CLI has no `usage` subcommand, so it spends the quota it measures. Set `0` to rely on passive capture alone. | `100` |
+| `CLI_AUTH_PROBE_INTERVAL_SECONDS` | Background CLI-auth probe cadence when `CLAUDE_AUTH_METHOD=claude_cli`. Each probe is a 1-turn `query` (~$0.001 at Sonnet pricing). Only a failure classified `auth_failure` flips `cli_health.ok` and returns 401; `quota_exhausted` and `unknown` fall through to the SDK. Set `0` to disable. Ignored for non-cli auth methods. | `600` (10 min) |
+| `WRAPPER_QUOTA_ENFORCEMENT_ENABLED` | Refuse requests with 429 while a quota window is `rejected`, rather than forwarding a call that cannot succeed. Off by default, since refusing changes behaviour for existing callers. | `false` |
+| `WRAPPER_QUOTA_PROBE_EVERY_N_REQUESTS` | Requests between quota refresh probes. The bundled CLI has no `usage` subcommand, so a probe is a real 1-turn call that spends the quota it measures. Set `0` to rely on live traffic alone. | `100` |
 | `WRAPPER_QUOTA_PROBE_MIN_INTERVAL_SECONDS` | Floor between quota probes so a burst cannot trigger a run of them. | `300` (5 min) |
 | `WRAPPER_QUOTA_STALE_AFTER_SECONDS` | Age at which a `/v1/usage` window reading is flagged `stale`. | `900` (15 min) |
 | `DEBUG_MODE` | Enable debug logging and unlock `/v1/debug/request` | `false` |
@@ -301,29 +301,32 @@ Claude-specific options via HTTP headers:
 
 Model IDs, context windows, and pricing are sourced from the Anthropic models docs (`platform.claude.com/docs/en/about-claude/models/overview`) and mirrored in `src/constants.py`.
 
-With `ANTHROPIC_API_KEY` set, `/v1/models` returns Anthropic's live catalogue (cached for `MODEL_LIST_CACHE_TTL_SECONDS`, default 1 hour) and the wrapper picks the latest Sonnet as `DEFAULT_MODEL` at startup. Without it (Bedrock, Vertex, or Claude CLI auth), the static list below is served and `claude-sonnet-4-6` is the fallback. `CLAUDE_MODELS_OVERRIDE=a,b,c` pins the list regardless of auth.
+With `ANTHROPIC_API_KEY` set, `/v1/models` returns Anthropic's live catalogue (cached for `MODEL_LIST_CACHE_TTL_SECONDS`, default 1 hour) and the wrapper picks the latest Sonnet as `DEFAULT_MODEL` at startup. Without it (Bedrock, Vertex, or Claude CLI auth), the static list below is served and `claude-sonnet-5` is the fallback. `CLAUDE_MODELS_OVERRIDE=a,b,c` pins the list regardless of auth.
 
 ### Latest
 | Model | Context | Max Output | Input $/MTok | Output $/MTok |
 |-------|---------|-----------|-------------|--------------|
+| `claude-fable-5` | 1M | 128K | $10 | $50 |
+| `claude-opus-5` | 1M | 128K | $5 | $25 |
+| `claude-sonnet-5` (default) | 1M | 128K | $3 | $15 |
 | `claude-opus-4-8` | 1M | 128K | $5 | $25 |
 | `claude-opus-4-7` | 1M | 128K | $5 | $25 |
-| `claude-sonnet-4-6` (default) | 1M | 64K | $3 | $15 |
 | `claude-haiku-4-5-20251001` | 200K | 64K | $1 | $5 |
 
 ### Legacy (active, consider migrating)
 | Model | Context | Max Output | Input $/MTok | Output $/MTok |
 |-------|---------|-----------|-------------|--------------|
 | `claude-opus-4-6` | 1M | 128K | $5 | $25 |
+| `claude-sonnet-4-6` | 1M | 64K | $3 | $15 |
 | `claude-opus-4-5-20251101` | 200K | 64K | $5 | $25 |
-| `claude-opus-4-1-20250805` | 200K | 32K | $15 | $75 |
 | `claude-sonnet-4-5-20250929` | 200K | 64K | $3 | $15 |
+| `claude-opus-4-1-20250805` | 200K | 32K | $15 | $75 |
 
 ### Deprecated (retires 2026-06-15)
 | Model | Context | Max Output | Input $/MTok | Output $/MTok | Replacement |
 |-------|---------|-----------|-------------|--------------|-------------|
-| `claude-sonnet-4-20250514` | 200K | 64K | $3 | $15 | `claude-sonnet-4-6` |
-| `claude-opus-4-20250514` | 200K | 32K | $15 | $75 | `claude-opus-4-8` |
+| `claude-sonnet-4-20250514` | 200K | 64K | $3 | $15 | `claude-sonnet-5` |
+| `claude-opus-4-20250514` | 200K | 32K | $15 | $75 | `claude-opus-5` |
 
 **Note:** Claude 3.x models are not supported by the Claude Agent SDK.
 
@@ -457,6 +460,63 @@ response = client.chat.completions.create(
 With `json_object` mode, the wrapper adds system prompt instructions for JSON output, strips preambles like "Here is the JSON:", and uses brace-matching extraction as a fallback. Works streaming and non-streaming. JSON schema is also accepted via `response_format={"type": "json_schema", "json_schema": {...}}`.
 
 In either JSON mode the wrapper moves your system prompt to the front of the user turn. The Claude Agent SDK treats its system prompt slot as a persona, not as binding instructions, so a schema left there gets ignored, with field names coming back renamed and required fields missing. Relocating the text fixes that. It is a move, not a copy, so your token count does not change. Plain text requests are not affected.
+
+## Quota and Rate Limits
+
+`GET /v1/usage` reports what the Claude CLI last said about your subscription
+quota. Windows appear only once the CLI has reported them, so a wrapper that
+has served no traffic returns an empty set rather than a guess.
+
+```bash
+curl -s http://localhost:8000/v1/usage
+```
+
+```json
+{
+  "blocked": false,
+  "blocked_until": null,
+  "blocked_until_iso": null,
+  "seconds_until_reset": null,
+  "windows": {
+    "five_hour": {
+      "status": "allowed_warning",
+      "utilization": 0.93,
+      "resets_at": 1788135731,
+      "resets_at_iso": "2026-08-31T00:22:11+00:00",
+      "seconds_until_reset": 1799,
+      "observed_at": "2026-08-30T22:47:11.779408+00:00",
+      "source": "passive",
+      "stale": false
+    }
+  },
+  "observed_windows": 1
+}
+```
+
+`status` is `allowed`, `allowed_warning` (close to the limit) or `rejected`.
+Window keys are `five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`
+and `overage`. `source` is `passive` for a reading taken from live traffic and
+`probe` for one from a refresh probe. `stale` marks a reading older than
+`WRAPPER_QUOTA_STALE_AFTER_SECONDS`.
+
+The data comes from the SDK's `RateLimitEvent`, which the CLI emits whenever
+rate-limit state changes. No proxy in front of the API is needed. State is
+per-process, so with `UVICORN_WORKERS` above 1 each worker reports what its own
+traffic has taught it.
+
+When the upstream rejects a request for quota, the wrapper returns 429 with a
+`Retry-After` derived from the real reset time, capped at 3600 seconds so a
+week-long window cannot tell a client to sleep for days. The exact reset is in
+the body:
+
+```json
+{"error": {"type": "rate_limit_exceeded", "code": "upstream_quota_exhausted",
+           "resets_at": 1788135731, "seconds_until_reset": 1799}}
+```
+
+Set `WRAPPER_QUOTA_ENFORCEMENT_ENABLED=true` to refuse requests before the
+round-trip while a window is rejected, instead of forwarding a call that cannot
+succeed.
 
 ## Limitations
 
