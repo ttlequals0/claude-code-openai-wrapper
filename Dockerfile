@@ -5,8 +5,11 @@
 # -----------------------------------------------------------------------------
 FROM python:3.12-slim AS base
 
-# Install system deps (curl for Poetry installer).
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install system deps (curl for Poetry installer). The upgrade picks up base
+# image packages Debian has already patched but the published tag predates,
+# e.g. openssl CVE-2026-14456. Without it those ship as trivy HIGH findings
+# that look unfixable but are not.
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
