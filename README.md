@@ -4,10 +4,11 @@ OpenAI API-compatible wrapper for Claude Code. Drop it in front of any OpenAI cl
 
 ## Version
 
-**Current:** 2.10.0
+**Current:** 2.10.1
 
 Highlights of recent releases (full history in [CHANGELOG.md](./CHANGELOG.md)):
 
+- **2.10.1** - `/v1/usage` was missing the `seven_day` window and reported a null `utilization` everywhere. The SDK models only the representative window, but the CLI sends every window under `raw.unifiedWindows`, which is the only place utilization appears. Since the 2026-08-30 outage ran far longer than a five-hour window can explain, the weekly cap is the likely cause and `seven_day` was exactly what was not being reported. Adds `closest_to_limit` and `binding_window`, and surfaces `disabled_reason` on the overage pool.
 - **2.10.0** - Fixed a 13.5-hour outage on 2026-08-30 where a subscription usage limit was reported to every caller as HTTP 401 `authentication_error`. Only a genuine auth failure returns 401 now. New `GET /v1/usage` reports quota per rate-limit window, read from the SDK's `RateLimitEvent` instead of a proxy. `Retry-After` comes from the upstream reset rather than a hardcoded 30s, `/v1/messages` stops collapsing a rate limit to 502, and `WRAPPER_QUOTA_ENFORCEMENT_ENABLED` adds opt-in 429 blocking. `claude-agent-sdk` 0.2.128 -> 0.2.148, `cryptography` floor >=50.0.0 (Dependabot #29). pip removed from the runtime image, clearing the last two language-package trivy findings.
 - **2.9.14** - JSON mode relocates the caller's system prompt into the user turn, because the Agent SDK treats `options.system_prompt` as a persona rather than binding instructions. Multiple system messages are joined instead of collapsing to the last one. `claude-agent-sdk` 0.2.127 -> 0.2.128.
 - **2.9.12** - Added `claude-opus-5` (Opus 5, $5/$25 MTok, 1M context / 128K max output) to the model catalogue. `claude-agent-sdk` 0.2.110 -> 0.2.127. Security floors raised: `mcp` >=1.28.1 (closes three high alerts #26-28) and `nltk` >=3.10.0 (closes #24, previously accepted risk - fix now shipped). Deep health probe no longer returns exception messages to clients (CodeQL py/stack-trace-exposure).
@@ -25,7 +26,7 @@ Highlights of recent releases (full history in [CHANGELOG.md](./CHANGELOG.md)):
 
 ## Status
 
-Production ready. **730 tests passing (31 skipped)**. Streaming works. Sessions work. JSON mode works. Function calling works. Tools are off by default for speed - pass `enable_tools: true` to turn them on. Auth supports API key, Bedrock, Vertex AI, and CLI.
+Production ready. **738 tests passing (31 skipped)**. Streaming works. Sessions work. JSON mode works. Function calling works. Tools are off by default for speed - pass `enable_tools: true` to turn them on. Auth supports API key, Bedrock, Vertex AI, and CLI.
 
 ## Quick Start
 
@@ -136,7 +137,7 @@ docker run -d -p 8000:8000 \
 docker run -d -p 8000:8000 \
   -v ~/.claude:/root/.claude \
   --name claude-wrapper \
-  ttlequals0/claude-code-openai-wrapper:2.10.0
+  ttlequals0/claude-code-openai-wrapper:2.10.1
 
 # Or build locally (prod stage is the default target)
 docker build --platform linux/amd64 -t claude-wrapper:local .
@@ -477,27 +478,57 @@ curl -s http://localhost:8000/v1/usage
   "blocked_until": null,
   "blocked_until_iso": null,
   "seconds_until_reset": null,
+  "binding_window": "five_hour",
+  "closest_to_limit": {
+    "window": "seven_day",
+    "utilization": 0.05,
+    "resets_at": 1788732000,
+    "resets_at_iso": "2026-09-06T22:00:00+00:00",
+    "seconds_until_reset": 599454
+  },
   "windows": {
     "five_hour": {
-      "status": "allowed_warning",
-      "utilization": 0.93,
-      "resets_at": 1788135731,
-      "resets_at_iso": "2026-08-31T00:22:11+00:00",
-      "seconds_until_reset": 1799,
-      "observed_at": "2026-08-30T22:47:11.779408+00:00",
+      "status": "allowed",
+      "utilization": 0.29,
+      "resets_at": 1788145200,
+      "resets_at_iso": "2026-08-31T03:00:00+00:00",
+      "seconds_until_reset": 12654,
+      "representative": true,
+      "observed_at": "2026-08-30T23:29:05.694090+00:00",
+      "source": "passive",
+      "stale": false
+    },
+    "seven_day": {
+      "status": null,
+      "utilization": 0.05,
+      "resets_at": 1788732000,
+      "resets_at_iso": "2026-09-06T22:00:00+00:00",
+      "seconds_until_reset": 599454,
+      "representative": false,
+      "observed_at": "2026-08-30T23:29:05.694090+00:00",
       "source": "passive",
       "stale": false
     }
   },
-  "observed_windows": 1
+  "observed_windows": 2
 }
 ```
 
-`status` is `allowed`, `allowed_warning` (close to the limit) or `rejected`.
+`closest_to_limit` names the window nearest its cap. That is the one that will
+cut you off, and it is not always the window the CLI reports as
+`binding_window`, so check it first.
+
 Window keys are `five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`
-and `overage`. `source` is `passive` for a reading taken from live traffic and
-`probe` for one from a refresh probe. `stale` marks a reading older than
-`WRAPPER_QUOTA_STALE_AFTER_SECONDS`.
+and `overage`. `status` is `allowed`, `allowed_warning` (close to the limit) or
+`rejected`, and is set only on the window flagged `representative`: the CLI
+reports one status per event, and inferring a status for the others from their
+utilization would be making it up. `source` is `passive` for a reading from
+live traffic and `probe` for one from a refresh probe. `stale` marks a reading
+older than `WRAPPER_QUOTA_STALE_AFTER_SECONDS`.
+
+A `rejected` overage pool usually means pay-as-you-go is switched off rather
+than exhausted; check `disabled_reason` (for example `org_level_disabled`)
+before treating it as a quota problem.
 
 The data comes from the SDK's `RateLimitEvent`, which the CLI emits whenever
 rate-limit state changes. No proxy in front of the API is needed. State is
@@ -528,7 +559,7 @@ succeed.
 ## Testing
 
 ```bash
-# Run the full test suite (730 tests, ~8 s on a laptop)
+# Run the full test suite (738 tests, ~8 s on a laptop)
 poetry run pytest tests/
 
 # Quick endpoint test (server must be running)

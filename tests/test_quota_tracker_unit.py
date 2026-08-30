@@ -76,6 +76,90 @@ class TestQuotaTrackerRecord:
         assert tracker.snapshot()["windows"]["five_hour"]["source"] == "probe"
 
 
+class TestQuotaTrackerUnifiedWindows:
+    """The SDK models only the representative window, but the CLI sends every
+    window under raw["unifiedWindows"], and that is the only place utilization
+    appears. Reading just the modelled fields lost seven_day entirely and
+    reported a null utilization for everything."""
+
+    @staticmethod
+    def _real_payload():
+        """Verbatim shape observed from the CLI on 2026-08-30."""
+        return {
+            "status": "allowed",
+            "rate_limit_type": "five_hour",
+            "resets_at": 1788145200,
+            "overage_status": "rejected",
+            "overage_disabled_reason": "org_level_disabled",
+            "raw": {
+                "unifiedWindows": {
+                    "five_hour": {"utilization": 0.29, "resetsAt": 1788145200},
+                    "seven_day": {"utilization": 0.05, "resetsAt": 1788732000},
+                }
+            },
+        }
+
+    def test_seven_day_is_recorded(self):
+        tracker = QuotaTracker()
+        tracker.record(self._real_payload())
+        windows = tracker.snapshot()["windows"]
+        assert "seven_day" in windows
+        assert windows["seven_day"]["utilization"] == 0.05
+        assert windows["seven_day"]["resets_at"] == 1788732000
+
+    def test_utilization_comes_from_unified_windows(self):
+        """The top-level payload carries no utilization field at all."""
+        tracker = QuotaTracker()
+        tracker.record(self._real_payload())
+        assert tracker.snapshot()["windows"]["five_hour"]["utilization"] == 0.29
+
+    def test_only_the_named_window_carries_a_status(self):
+        tracker = QuotaTracker()
+        tracker.record(self._real_payload())
+        windows = tracker.snapshot()["windows"]
+        assert windows["five_hour"]["status"] == "allowed"
+        assert windows["five_hour"]["representative"] is True
+        assert windows["seven_day"]["status"] is None
+        assert windows["seven_day"]["representative"] is False
+
+    def test_binding_window_is_named(self):
+        tracker = QuotaTracker()
+        tracker.record(self._real_payload())
+        assert tracker.snapshot()["binding_window"] == "five_hour"
+
+    def test_closest_to_limit_ignores_which_window_the_cli_named(self):
+        """The weekly window can be nearest the cap while the CLI names the
+        five-hour one; the summary must report the real constraint."""
+        payload = self._real_payload()
+        payload["raw"]["unifiedWindows"]["seven_day"]["utilization"] = 0.97
+        tracker = QuotaTracker()
+        tracker.record(payload)
+        closest = tracker.snapshot()["closest_to_limit"]
+        assert closest["window"] == "seven_day"
+        assert closest["utilization"] == 0.97
+
+    def test_overage_disabled_reason_is_surfaced(self):
+        """A rejected overage pool reads as alarming until you see why."""
+        tracker = QuotaTracker()
+        tracker.record(self._real_payload())
+        overage = tracker.snapshot()["windows"]["overage"]
+        assert overage["status"] == "rejected"
+        assert overage["disabled_reason"] == "org_level_disabled"
+
+    def test_rejected_overage_alone_does_not_block(self):
+        tracker = QuotaTracker()
+        tracker.record(self._real_payload())
+        assert tracker.snapshot()["blocked"] is False
+
+    def test_falls_back_when_unified_windows_absent(self):
+        """Older CLI builds send no unifiedWindows key."""
+        tracker = QuotaTracker()
+        tracker.record(_info(utilization=0.42))
+        window = tracker.snapshot()["windows"]["five_hour"]
+        assert window["utilization"] == 0.42
+        assert window["representative"] is True
+
+
 class TestQuotaTrackerBlocking:
     def test_not_blocked_when_allowed(self):
         tracker = QuotaTracker()

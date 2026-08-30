@@ -81,12 +81,19 @@ def _iso(unix_seconds: Optional[float]) -> Optional[str]:
 
 @dataclass
 class QuotaWindow:
-    """Last reported state of one rate-limit window."""
+    """Last reported state of one rate-limit window.
+
+    ``status`` is None for a window the CLI did not name as the binding one:
+    it reports a status for the representative window only, and inferring one
+    from utilization would be inventing data.
+    """
 
     rate_limit_type: str
-    status: str
+    status: Optional[str] = None
     utilization: Optional[float] = None
     resets_at: Optional[int] = None
+    representative: bool = False
+    disabled_reason: Optional[str] = None
     source: str = "passive"
     observed_at: float = field(default_factory=time.time)
 
@@ -96,7 +103,7 @@ class QuotaWindow:
         return max(0, int(self.resets_at - now))
 
     def as_dict(self, now: float, stale_after: int) -> Dict[str, Any]:
-        return {
+        payload = {
             "status": self.status,
             "utilization": (
                 round(self.utilization, 4) if isinstance(self.utilization, float) else None
@@ -104,10 +111,14 @@ class QuotaWindow:
             "resets_at": self.resets_at,
             "resets_at_iso": _iso(self.resets_at),
             "seconds_until_reset": self.seconds_until_reset(now),
+            "representative": self.representative,
             "observed_at": _iso(self.observed_at),
             "source": self.source,
             "stale": (now - self.observed_at) > stale_after,
         }
+        if self.disabled_reason:
+            payload["disabled_reason"] = self.disabled_reason
+        return payload
 
 
 class QuotaTracker:
@@ -130,9 +141,11 @@ class QuotaTracker:
     def record(self, info: Any, source: str = "passive") -> None:
         """Record a RateLimitInfo, as the SDK dataclass or an equivalent dict.
 
-        A single event describes the binding window and, separately, the
-        overage pool; both are stored so blocking can tell whether paid burst
-        capacity is still available.
+        The SDK models only the representative window plus the overage pool,
+        but the CLI sends every window under raw["unifiedWindows"], and that
+        is the only place utilization appears. Reading just the modelled
+        fields loses the weekly window entirely and reports a null
+        utilization for everything.
         """
         get = info.get if isinstance(info, dict) else lambda k, d=None: getattr(info, k, d)
 
@@ -141,31 +154,51 @@ class QuotaTracker:
             return
 
         now = time.time()
-        rate_limit_type = get("rate_limit_type") or "unknown"
-        window = QuotaWindow(
-            rate_limit_type=rate_limit_type,
-            status=status,
-            utilization=get("utilization"),
-            resets_at=get("resets_at"),
-            source=source,
-            observed_at=now,
-        )
+        representative = get("rate_limit_type") or "unknown"
+        raw = get("raw") or {}
+        unified = raw.get("unifiedWindows") if isinstance(raw, dict) else None
+
+        windows = {}
+        if isinstance(unified, dict):
+            for name, data in unified.items():
+                if not isinstance(data, dict):
+                    continue
+                windows[name] = QuotaWindow(
+                    rate_limit_type=name,
+                    status=status if name == representative else None,
+                    utilization=data.get("utilization"),
+                    resets_at=data.get("resetsAt"),
+                    representative=(name == representative),
+                    source=source,
+                    observed_at=now,
+                )
+
+        # Fall back to the modelled fields for the representative window when
+        # unifiedWindows is absent or does not mention it.
+        if representative not in windows:
+            windows[representative] = QuotaWindow(
+                rate_limit_type=representative,
+                status=status,
+                utilization=get("utilization"),
+                resets_at=get("resets_at"),
+                representative=True,
+                source=source,
+                observed_at=now,
+            )
 
         overage_status = get("overage_status")
-        overage = None
         if isinstance(overage_status, str):
-            overage = QuotaWindow(
+            windows[OVERAGE] = QuotaWindow(
                 rate_limit_type=OVERAGE,
                 status=overage_status,
                 resets_at=get("overage_resets_at"),
+                disabled_reason=get("overage_disabled_reason"),
                 source=source,
                 observed_at=now,
             )
 
         with self._lock:
-            self._windows[rate_limit_type] = window
-            if overage is not None:
-                self._windows[OVERAGE] = overage
+            self._windows.update(windows)
 
     def note_request(self) -> None:
         """Count a request towards the next refresh probe."""
@@ -219,12 +252,39 @@ class QuotaTracker:
         now = time.time()
         blocked_until = self.blocked_until()
         with self._lock:
-            windows = {key: w.as_dict(now, self._stale_after) for key, w in self._windows.items()}
+            stored = dict(self._windows)
+            windows = {key: w.as_dict(now, self._stale_after) for key, w in stored.items()}
+
+        # The window nearest its cap is the one that will cut you off, and it
+        # is not always the one the CLI named. Surfacing it here means callers
+        # do not have to scan and compare every window themselves.
+        rated = [
+            w
+            for key, w in stored.items()
+            if key != OVERAGE and isinstance(w.utilization, (int, float))
+        ]
+        closest = max(rated, key=lambda w: w.utilization) if rated else None
+        representative = next(
+            (key for key, w in stored.items() if w.representative and key != OVERAGE), None
+        )
+
         return {
             "blocked": blocked_until is not None,
             "blocked_until": blocked_until or None,
             "blocked_until_iso": _iso(blocked_until) if blocked_until else None,
             "seconds_until_reset": (max(0, int(blocked_until - now)) if blocked_until else None),
+            "binding_window": representative,
+            "closest_to_limit": (
+                {
+                    "window": closest.rate_limit_type,
+                    "utilization": round(float(closest.utilization), 4),
+                    "resets_at": closest.resets_at,
+                    "resets_at_iso": _iso(closest.resets_at),
+                    "seconds_until_reset": closest.seconds_until_reset(now),
+                }
+                if closest is not None
+                else None
+            ),
             "windows": windows,
             "observed_windows": len(windows),
         }
