@@ -16,8 +16,9 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Mount Claude CLI credentials
-      - ~/.claude:/root/.claude
+      # Mount Claude CLI credentials. :Z relabels for SELinux (Fedora, RHEL,
+      # rootless Podman) and is ignored where SELinux is not enforcing.
+      - ~/.claude:/root/.claude:Z
       # Optional: Mount a specific workspace directory
       # - ./workspace:/workspace
     environment:
