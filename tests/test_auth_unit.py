@@ -534,6 +534,64 @@ class TestProbeCliAuth:
         assert src.auth.cli_health.ok is False
         assert src.auth.cli_health.error_kind == "unknown"
 
+    @pytest.mark.asyncio
+    async def test_probe_cli_auth_http_429_marks_quota_exhausted(self):
+        """A ResultError carrying HTTP 429 is quota, never auth."""
+        import src.auth
+
+        importlib.reload(src.auth)
+        exc = RuntimeError("Claude Code returned an error result: API Error")
+        exc.api_error_status = 429
+        fake_cli = MagicMock()
+        fake_cli.verify_cli = AsyncMock(side_effect=exc)
+        result = await src.auth.probe_cli_auth(cli=fake_cli)
+        assert result is False
+        assert src.auth.cli_health.ok is False
+        assert src.auth.cli_health.error_kind == "quota_exhausted"
+
+    @pytest.mark.asyncio
+    async def test_probe_cli_auth_http_401_marks_auth_failure(self):
+        import src.auth
+
+        importlib.reload(src.auth)
+        exc = RuntimeError("Claude Code returned an error result: API Error")
+        exc.api_error_status = 401
+        fake_cli = MagicMock()
+        fake_cli.verify_cli = AsyncMock(side_effect=exc)
+        await src.auth.probe_cli_auth(cli=fake_cli)
+        assert src.auth.cli_health.error_kind == "auth_failure"
+
+    @pytest.mark.asyncio
+    async def test_probe_cli_auth_usage_limit_prose_marks_quota_exhausted(self):
+        """No HTTP status: fall back to the CLI's own prose in result."""
+        import src.auth
+
+        importlib.reload(src.auth)
+        exc = RuntimeError("Claude Code returned an error result")
+        exc.result = "API Error: usage limit reached"
+        fake_cli = MagicMock()
+        fake_cli.verify_cli = AsyncMock(side_effect=exc)
+        await src.auth.probe_cli_auth(cli=fake_cli)
+        assert src.auth.cli_health.error_kind == "quota_exhausted"
+
+
+class TestClassifyProbeError:
+    """Text classifier used when the SDK reports no HTTP status."""
+
+    def test_quota_markers_win_over_auth_markers(self):
+        import src.auth
+
+        assert src.auth._classify_probe_error("rate limit exceeded") == "quota_exhausted"
+        assert src.auth._classify_probe_error("Not logged in") == "auth_failure"
+        assert src.auth._classify_probe_error("connection refused") == "unknown"
+
+    def test_degenerate_sdk_text_is_not_an_auth_failure(self):
+        """The 2026-08-30 outage string must not classify as auth."""
+        import src.auth
+
+        blob = "Claude Code returned an error result: success"
+        assert src.auth._classify_probe_error(blob) == "unknown"
+
 
 # Reset module state after tests
 @pytest.fixture(autouse=True)

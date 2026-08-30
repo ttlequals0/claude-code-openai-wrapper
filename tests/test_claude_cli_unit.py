@@ -594,16 +594,20 @@ class TestClaudeCodeCLIVerifyCLI:
             assert result is False
 
     @pytest.mark.asyncio
-    async def test_verify_cli_exception(self, cli_instance):
-        """verify_cli returns False on exception."""
+    async def test_verify_cli_propagates_exception(self, cli_instance):
+        """verify_cli raises rather than collapsing an SDK failure to False.
+
+        The caller needs the exception to classify the failure; swallowing it
+        is what reported a quota rejection as an auth failure on 2026-08-30.
+        """
 
         async def mock_query(*args, **kwargs):
             raise RuntimeError("SDK error")
             yield  # Make it a generator
 
         with patch("src.claude_cli.query", mock_query):
-            result = await cli_instance.verify_cli()
-            assert result is False
+            with pytest.raises(RuntimeError, match="SDK error"):
+                await cli_instance.verify_cli()
 
 
 class TestClaudeCodeCLIRunCompletion:

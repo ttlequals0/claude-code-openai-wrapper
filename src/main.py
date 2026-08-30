@@ -1440,8 +1440,19 @@ def _check_cli_auth_or_401() -> Optional[JSONResponse]:
     is intentional: the global http_exception_handler wraps all detail bodies
     as `error.type=api_error`, which clobbers the OpenAI-shaped
     `authentication_error` literal that clients route on.
+
+    Only error_kind == 'auth_failure' gates. A probe that failed for any
+    other reason (quota, transport, unknown) falls through to the SDK, which
+    returns an accurate status. Gating on `ok` alone meant a 2026-08-30 quota
+    rejection - already classified 'unknown', i.e. explicitly not an auth
+    problem - returned 401 for 13.5 hours, telling clients their credentials
+    were bad and stopping them from retrying.
     """
-    if _auth.auth_manager.auth_method == "claude_cli" and not _auth.cli_health.ok:
+    if (
+        _auth.auth_manager.auth_method == "claude_cli"
+        and not _auth.cli_health.ok
+        and _auth.cli_health.error_kind == "auth_failure"
+    ):
         return JSONResponse(
             status_code=401,
             content={

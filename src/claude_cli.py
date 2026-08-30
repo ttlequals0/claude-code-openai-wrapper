@@ -127,45 +127,37 @@ class ClaudeCodeCLI:
         self.claude_env_vars = auth_manager.get_claude_code_env_vars()
 
     async def verify_cli(self) -> bool:
-        """Verify Claude Agent SDK is working and authenticated."""
-        try:
-            # Test SDK with a simple query
-            logger.info("Testing Claude Agent SDK...")
+        """Run a 1-turn SDK probe. Returns False if it yields no messages.
 
-            messages = []
-            async for message in query(
-                prompt="Hello",
-                options=ClaudeAgentOptions(
-                    max_turns=1,
-                    cwd=self.cwd,
-                    system_prompt={"type": "preset", "preset": "claude_code"},
-                ),
-            ):
-                messages.append(message)
-                # Break early on first response to speed up verification
-                # Handle both dict and object types
-                msg_type = (
-                    getattr(message, "type", None)
-                    if hasattr(message, "type")
-                    else message.get("type") if isinstance(message, dict) else None
-                )
-                if msg_type == "assistant":
-                    break
+        SDK failures propagate rather than collapsing to False. Swallowing
+        them here is what turned a quota rejection into a reported auth
+        failure on 2026-08-30: callers saw a bare False and had nothing left
+        to classify. ResultError carries api_error_status and the CLI's own
+        prose, so it must reach the caller intact.
 
-            if messages:
-                logger.info("✅ Claude Agent SDK verified successfully")
-                return True
-            else:
-                logger.warning("⚠️ Claude Agent SDK test returned no messages")
-                return False
+        The stream is drained rather than broken at the first assistant turn
+        so the terminating result frame, and any RateLimitEvent alongside it,
+        are seen.
+        """
+        logger.info("Testing Claude Agent SDK...")
 
-        except Exception as e:
-            logger.error(f"Claude Agent SDK verification failed: {e}")
-            logger.warning("Please ensure Claude Code is installed and authenticated:")
-            logger.warning("  1. Install: npm install -g @anthropic-ai/claude-code")
-            logger.warning("  2. Set ANTHROPIC_API_KEY environment variable")
-            logger.warning("  3. Test: claude --print 'Hello'")
+        messages = []
+        async for message in query(
+            prompt="Hello",
+            options=ClaudeAgentOptions(
+                max_turns=1,
+                cwd=self.cwd,
+                system_prompt={"type": "preset", "preset": "claude_code"},
+            ),
+        ):
+            messages.append(message)
+
+        if not messages:
+            logger.warning("Claude Agent SDK test returned no messages")
             return False
+
+        logger.info("Claude Agent SDK verified successfully")
+        return True
 
     async def run_completion(
         self,

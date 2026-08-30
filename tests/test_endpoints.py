@@ -159,3 +159,41 @@ class TestChatCompletionsCliHealthGate:
         assert body["error"]["type"] == "authentication_error"
         assert body["error"]["code"] == "claude_cli_not_authenticated"
         assert body["error"]["error_kind"] == "auth_failure"
+
+    @pytest.mark.parametrize("kind", ["quota_exhausted", "unknown"])
+    def test_non_auth_probe_failure_does_not_gate_with_401(self, monkeypatch, kind):
+        """Regression for the 2026-08-30 outage.
+
+        A quota rejection was classified 'unknown' - explicitly not an auth
+        problem - yet the gate keyed on `ok` alone and returned 401 for 13.5
+        hours. Only 'auth_failure' may produce 401.
+
+        Checks the gate directly: letting it fall through in-process would
+        issue a real SDK call.
+        """
+        from src import main as main_mod
+        from src import auth as auth_mod
+
+        monkeypatch.setattr(auth_mod.auth_manager, "auth_method", "claude_cli", raising=False)
+        monkeypatch.setattr(main_mod, "validate_claude_code_auth", lambda: (True, {}))
+        auth_mod.cli_health.mark_failed(kind, "Claude Code returned an error result: success")
+
+        try:
+            assert main_mod._check_cli_auth_or_401() is None
+        finally:
+            auth_mod.cli_health.mark_ok()
+
+    def test_auth_failure_still_gates_with_401(self, monkeypatch):
+        from src import main as main_mod
+        from src import auth as auth_mod
+
+        monkeypatch.setattr(auth_mod.auth_manager, "auth_method", "claude_cli", raising=False)
+        auth_mod.cli_health.mark_failed("auth_failure", "Not logged in")
+
+        try:
+            blocked = main_mod._check_cli_auth_or_401()
+        finally:
+            auth_mod.cli_health.mark_ok()
+
+        assert blocked is not None
+        assert blocked.status_code == 401
