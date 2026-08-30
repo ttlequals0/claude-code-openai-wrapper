@@ -2,12 +2,14 @@ import os
 import tempfile
 import atexit
 import shutil
+import time
 from typing import AsyncGenerator, Dict, Any, Optional, List
 from pathlib import Path
 import logging
 
-from claude_agent_sdk import query, ClaudeAgentOptions
+from claude_agent_sdk import query, ClaudeAgentOptions, RateLimitEvent
 
+from src.quota_tracker import quota_tracker
 from src.retry import RetryState, retry_delay
 
 logger = logging.getLogger(__name__)
@@ -75,6 +77,8 @@ class ClaudeResultError(Exception):
         stop_reason: Optional[str] = None,
         error_message: Optional[str] = None,
         stderr_tail: Optional[str] = None,
+        resets_at: Optional[int] = None,
+        rate_limit_type: Optional[str] = None,
     ):
         self.subtype = subtype
         self.num_turns = num_turns
@@ -82,8 +86,15 @@ class ClaudeResultError(Exception):
         self.stop_reason = stop_reason
         self.error_message = error_message
         self.stderr_tail = stderr_tail
+        # Set only for rate-limit results; drives a real Retry-After.
+        self.resets_at = resets_at
+        self.rate_limit_type = rate_limit_type
         detail = error_message or (self.errors[0] if self.errors else subtype)
         super().__init__(f"Claude SDK returned {subtype} after {num_turns} turns: {detail}")
+
+
+# Ceiling on how long an in-request retry will wait for a quota reset.
+_MAX_INLINE_RETRY_AFTER_SECONDS = 60
 
 
 class ClaudeCodeCLI:
@@ -127,45 +138,54 @@ class ClaudeCodeCLI:
         self.claude_env_vars = auth_manager.get_claude_code_env_vars()
 
     async def verify_cli(self) -> bool:
-        """Verify Claude Agent SDK is working and authenticated."""
-        try:
-            # Test SDK with a simple query
-            logger.info("Testing Claude Agent SDK...")
+        """Run a 1-turn SDK probe. Returns False if it yields no messages.
 
-            messages = []
-            async for message in query(
-                prompt="Hello",
-                options=ClaudeAgentOptions(
-                    max_turns=1,
-                    cwd=self.cwd,
-                    system_prompt={"type": "preset", "preset": "claude_code"},
-                ),
-            ):
-                messages.append(message)
-                # Break early on first response to speed up verification
-                # Handle both dict and object types
-                msg_type = (
-                    getattr(message, "type", None)
-                    if hasattr(message, "type")
-                    else message.get("type") if isinstance(message, dict) else None
-                )
-                if msg_type == "assistant":
-                    break
+        SDK failures propagate rather than collapsing to False. Swallowing
+        them here is what turned a quota rejection into a reported auth
+        failure on 2026-08-30: callers saw a bare False and had nothing left
+        to classify. ResultError carries api_error_status and the CLI's own
+        prose, so it must reach the caller intact.
 
-            if messages:
-                logger.info("✅ Claude Agent SDK verified successfully")
-                return True
-            else:
-                logger.warning("⚠️ Claude Agent SDK test returned no messages")
-                return False
+        The stream is drained rather than broken at the first assistant turn
+        so the terminating result frame, and any RateLimitEvent alongside it,
+        are seen.
+        """
+        logger.info("Testing Claude Agent SDK...")
 
-        except Exception as e:
-            logger.error(f"Claude Agent SDK verification failed: {e}")
-            logger.warning("Please ensure Claude Code is installed and authenticated:")
-            logger.warning("  1. Install: npm install -g @anthropic-ai/claude-code")
-            logger.warning("  2. Set ANTHROPIC_API_KEY environment variable")
-            logger.warning("  3. Test: claude --print 'Hello'")
+        messages = []
+        async for message in query(
+            prompt="Hello",
+            options=ClaudeAgentOptions(
+                max_turns=1,
+                cwd=self.cwd,
+                system_prompt={"type": "preset", "preset": "claude_code"},
+            ),
+        ):
+            messages.append(message)
+            if isinstance(message, RateLimitEvent):
+                quota_tracker.record(message.rate_limit_info, source="probe")
+
+        if not messages:
+            logger.warning("Claude Agent SDK test returned no messages")
             return False
+
+        logger.info("Claude Agent SDK verified successfully")
+        return True
+
+    def _quota_retry_after(self) -> Optional[float]:
+        """Seconds until the quota resets, bounded, or None if not blocked.
+
+        Bounded because a rejected window can reset hours out and this runs
+        inside a live request; the full reset reaches the caller in
+        Retry-After instead of holding the connection open.
+        """
+        resets_at = quota_tracker.blocked_until()
+        if not resets_at:
+            return None
+        remaining = resets_at - time.time()
+        if remaining <= 0:
+            return None
+        return min(remaining, _MAX_INLINE_RETRY_AFTER_SECONDS)
 
     async def run_completion(
         self,
@@ -258,6 +278,13 @@ class ClaudeCodeCLI:
                             logger.debug(f"Raw SDK message type: {type(message)}")
                             logger.debug(f"Raw SDK message: {message}")
 
+                            # Read quota state off the typed dataclass, before
+                            # the reflection below flattens it. Every consumer
+                            # (streaming, non-streaming, /v1/messages, deep
+                            # health) reaches the SDK through this one loop.
+                            if isinstance(message, RateLimitEvent):
+                                quota_tracker.record(message.rate_limit_info)
+
                             if hasattr(message, "__dict__") and not isinstance(message, dict):
                                 message_dict = {}
                                 for attr_name in dir(message):
@@ -302,7 +329,11 @@ class ClaudeCodeCLI:
 
                     except Exception as query_error:
                         error_str = str(query_error)
-                        status_code = getattr(query_error, "status_code", None)
+                        status_code = getattr(
+                            query_error,
+                            "status_code",
+                            getattr(query_error, "api_error_status", None),
+                        )
 
                         retry_state.record_attempt(status_code)
 
@@ -314,7 +345,11 @@ class ClaudeCodeCLI:
                                 options.model = current_model
 
                         if retry_state.should_retry(status_code=status_code, error=query_error):
-                            await retry_delay(retry_state)
+                            # Honour the upstream reset when we know it;
+                            # calculate_delay takes the larger of it and the
+                            # backoff. Previously never supplied, so a known
+                            # reset time had nowhere to go.
+                            await retry_delay(retry_state, self._quota_retry_after())
                             continue
 
                         raise  # Not retryable, propagate
@@ -388,25 +423,28 @@ class ClaudeCodeCLI:
                     error_message=None,
                 )
 
-        # RateLimitInfo messages (SDK 0.1.49+): emitted by the CLI when the
-        # rate-limit state changes. If status is 'rejected', the upstream has
-        # cut us off and callers should back off rather than consume the
-        # partial response.
+        # Rate-limit events: status 'rejected' means the upstream cut us off,
+        # so back off rather than consume the partial response. The event
+        # nests its fields under rate_limit_info; the previous check looked
+        # for them at the top level and so never fired.
         for message in messages:
-            if (
-                isinstance(message, dict)
-                and message.get("status") == "rejected"
-                and "resets_at" in message
-                and "rate_limit_type" in message
-            ):
-                resets_at = message.get("resets_at")
-                raise ClaudeResultError(
-                    subtype="assistant_rate_limit",
-                    num_turns=None,
-                    errors=["rate_limit"],
-                    stop_reason=None,
-                    error_message=f"upstream rate_limit ({message.get('rate_limit_type')}); resets_at={resets_at}",
-                )
+            info = message.get("rate_limit_info") if isinstance(message, dict) else None
+            if info is None:
+                continue
+            get = info.get if isinstance(info, dict) else lambda k: getattr(info, k, None)
+            if get("status") != "rejected":
+                continue
+            resets_at = get("resets_at")
+            rate_limit_type = get("rate_limit_type")
+            raise ClaudeResultError(
+                subtype="assistant_rate_limit",
+                num_turns=None,
+                errors=["rate_limit"],
+                stop_reason=None,
+                error_message=f"upstream rate_limit ({rate_limit_type}); resets_at={resets_at}",
+                resets_at=resets_at,
+                rate_limit_type=rate_limit_type,
+            )
 
         # Prefer ResultMessage.result (multi-turn completion).
         for message in messages:

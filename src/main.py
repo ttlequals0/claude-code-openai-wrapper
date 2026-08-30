@@ -89,6 +89,12 @@ from src.constants import (
     SESSION_CLEANUP_INTERVAL_MINUTES,
 )
 from src.model_service import model_service
+from src.quota_tracker import (
+    probe_every_n_requests,
+    probe_min_interval_seconds,
+    quota_enforcement_enabled,
+    quota_tracker,
+)
 from src.request_cache import request_cache
 from src.cost_tracker import cost_tracker, UsageRecord
 
@@ -527,6 +533,30 @@ async def lifespan(app: FastAPI):
 
     cli_auth_probe_task = asyncio.get_running_loop().create_task(cli_auth_probe_loop())
 
+    # Quota refresh, triggered by request volume rather than the clock. The
+    # auth probe above already refreshes quota on its fixed cadence; this
+    # catches the case where traffic burns through a window faster than that
+    # interval. Reuses probe_cli_auth, whose verify_cli call records the
+    # rate-limit event. The sleep is the floor between probes.
+    async def quota_probe_loop():
+        every_n = probe_every_n_requests()
+        if every_n <= 0:
+            logger.info("quota_probe disabled (every_n=%s)", every_n)
+            return
+        interval = probe_min_interval_seconds()
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                if _auth.auth_manager.auth_method != "claude_cli":
+                    continue
+                if not quota_tracker.probe_due(every_n):
+                    continue
+                await _auth.probe_cli_auth()
+        except asyncio.CancelledError:
+            pass
+
+    quota_probe_task = asyncio.get_running_loop().create_task(quota_probe_loop())
+
     # Start CPU watchdog (Linux/Docker only)
     cpu_watchdog.start()
 
@@ -535,6 +565,7 @@ async def lifespan(app: FastAPI):
     cpu_watchdog.stop()
     cost_cleanup_task.cancel()
     cli_auth_probe_task.cancel()
+    quota_probe_task.cancel()
 
     # Cleanup on shutdown
     logger.info("Shutting down session manager...")
@@ -900,16 +931,48 @@ def _safe_assistant_error_message(subtype: Optional[str]) -> str:
     return _ASSISTANT_ERROR_MESSAGE.get(subtype or "", "Upstream request failed")
 
 
+# Ceiling on Retry-After. A rejected seven_day window can reset days out, and
+# a client that honours the header verbatim would sleep through the whole
+# window; the true reset is in the body for callers that want it.
+_MAX_RETRY_AFTER_SECONDS = 3600
+_DEFAULT_RETRY_AFTER_SECONDS = 30
+
+
+def _retry_after_seconds(resets_at: Optional[int]) -> int:
+    """Seconds to wait, from the upstream reset time when one was reported."""
+    if not resets_at:
+        return _DEFAULT_RETRY_AFTER_SECONDS
+    return max(1, min(int(resets_at - time.time()), _MAX_RETRY_AFTER_SECONDS))
+
+
+def _rate_limit_detail(err: ClaudeResultError) -> Dict[str, Any]:
+    """Reset fields for a 429 body. Empty when no reset time was reported."""
+    resets_at = getattr(err, "resets_at", None)
+    if not resets_at:
+        return {}
+    return {
+        "rate_limit_type": getattr(err, "rate_limit_type", None),
+        "resets_at": resets_at,
+        "resets_at_iso": datetime.fromtimestamp(resets_at, tz=timezone.utc).isoformat(),
+        "seconds_until_reset": max(0, int(resets_at - time.time())),
+    }
+
+
 def _build_assistant_error_response(
     request_id: str, model: str, err: ClaudeResultError
 ) -> JSONResponse:
     """Translate an AssistantMessage error to a status-coded OpenAI error."""
     status = _ASSISTANT_ERROR_STATUS.get(err.subtype or "", 502)
     headers = None
+    body = {
+        "message": _safe_assistant_error_message(err.subtype),
+        "type": "upstream_api_error",
+        "code": err.subtype or "unknown",
+    }
     if status == 429:
-        # Conservative default. Callers that want a smarter backoff should
-        # inspect upstream rate-limit headers once the SDK exposes them.
-        headers = {"Retry-After": "30"}
+        retry_after = _retry_after_seconds(getattr(err, "resets_at", None))
+        headers = {"Retry-After": str(retry_after)}
+        body.update(_rate_limit_detail(err))
     logger.warning(
         _kv(
             "claude_sdk_assistant_error",
@@ -919,17 +982,7 @@ def _build_assistant_error_response(
             status=status,
         )
     )
-    return JSONResponse(
-        status_code=status,
-        headers=headers,
-        content={
-            "error": {
-                "message": _safe_assistant_error_message(err.subtype),
-                "type": "upstream_api_error",
-                "code": err.subtype or "unknown",
-            }
-        },
-    )
+    return JSONResponse(status_code=status, headers=headers, content={"error": body})
 
 
 def _handle_claude_result_error(
@@ -1376,19 +1429,24 @@ async def generate_streaming_response(
                         errors=sdk_error.errors,
                     )
                 )
-                err_payload = {
-                    "error": {
-                        "message": sdk_error.error_message
-                        or (
-                            sdk_error.errors[0]
-                            if sdk_error.errors
-                            else f"SDK returned {sdk_error.subtype}"
-                        ),
-                        "type": "upstream_sdk_error",
-                        "code": sdk_error.subtype or "unknown",
-                    }
+                err_body = {
+                    "message": sdk_error.error_message
+                    or (
+                        sdk_error.errors[0]
+                        if sdk_error.errors
+                        else f"SDK returned {sdk_error.subtype}"
+                    ),
+                    "type": "upstream_sdk_error",
+                    "code": sdk_error.subtype or "unknown",
                 }
-                yield f"data: {json.dumps(err_payload)}\n\n"
+                # The status line is already flushed, so the reset time can
+                # only travel in the body. Without it a streaming caller has
+                # no way to tell a rate limit from a transport failure.
+                if sdk_error.subtype == "assistant_rate_limit":
+                    err_body["type"] = "upstream_rate_limit"
+                    err_body.update(_rate_limit_detail(sdk_error))
+                    err_body["retry_after"] = _retry_after_seconds(sdk_error.resets_at)
+                yield f"data: {json.dumps({'error': err_body})}\n\n"
                 yield "data: [DONE]\n\n"
             return
 
@@ -1430,6 +1488,40 @@ async def generate_streaming_response(
         yield f"data: {json.dumps(error_chunk)}\n\n"
 
 
+def _check_quota_or_429() -> Optional[JSONResponse]:
+    """Refuse the request while the upstream quota is exhausted.
+
+    Opt-in via WRAPPER_QUOTA_ENFORCEMENT_ENABLED. When off, the request is
+    forwarded and the upstream rejection is translated to a 429 on the way
+    back; when on, the doomed round-trip is skipped. Either way the caller
+    gets 429 and a reset time, never a 401.
+    """
+    quota_tracker.note_request()
+    if not quota_enforcement_enabled():
+        return None
+
+    resets_at = quota_tracker.blocked_until()
+    if resets_at is None:
+        return None
+
+    snapshot = quota_tracker.snapshot()
+    logger.warning(_kv("quota_exhausted_block", resets_at=resets_at))
+    return JSONResponse(
+        status_code=429,
+        headers={"Retry-After": str(_retry_after_seconds(resets_at))},
+        content={
+            "error": {
+                "message": "Upstream quota is exhausted. Retry after the window resets.",
+                "type": "rate_limit_exceeded",
+                "code": "upstream_quota_exhausted",
+                "resets_at": snapshot["blocked_until"],
+                "resets_at_iso": snapshot["blocked_until_iso"],
+                "seconds_until_reset": snapshot["seconds_until_reset"],
+            }
+        },
+    )
+
+
 def _check_cli_auth_or_401() -> Optional[JSONResponse]:
     """Gate request handlers on the latest CLI-auth probe + the auth manager.
 
@@ -1440,8 +1532,19 @@ def _check_cli_auth_or_401() -> Optional[JSONResponse]:
     is intentional: the global http_exception_handler wraps all detail bodies
     as `error.type=api_error`, which clobbers the OpenAI-shaped
     `authentication_error` literal that clients route on.
+
+    Only error_kind == 'auth_failure' gates. A probe that failed for any
+    other reason (quota, transport, unknown) falls through to the SDK, which
+    returns an accurate status. Gating on `ok` alone meant a 2026-08-30 quota
+    rejection - already classified 'unknown', i.e. explicitly not an auth
+    problem - returned 401 for 13.5 hours, telling clients their credentials
+    were bad and stopping them from retrying.
     """
-    if _auth.auth_manager.auth_method == "claude_cli" and not _auth.cli_health.ok:
+    if (
+        _auth.auth_manager.auth_method == "claude_cli"
+        and not _auth.cli_health.ok
+        and _auth.cli_health.error_kind == "auth_failure"
+    ):
         return JSONResponse(
             status_code=401,
             content={
@@ -1498,6 +1601,11 @@ async def chat_completions(
     auth_block = _check_cli_auth_or_401()
     if auth_block is not None:
         return auth_block
+
+    # Quota gate. Counts the request for probe cadence either way.
+    quota_block = _check_quota_or_429()
+    if quota_block is not None:
+        return quota_block
 
     # Circuit breaker check: if the SDK has been failing at >50% for a minute,
     # fail-fast with 503 instead of forwarding another doomed request. The
@@ -1809,6 +1917,11 @@ async def anthropic_messages(
     if auth_block is not None:
         return auth_block
 
+    # Quota gate. Counts the request for probe cadence either way.
+    quota_block = _check_quota_or_429()
+    if quota_block is not None:
+        return quota_block
+
     try:
         logger.info(f"Anthropic Messages API request: model={request_body.model}")
 
@@ -1863,6 +1976,24 @@ async def anthropic_messages(
                     content=[AnthropicTextBlock(text="")],
                     stop_reason="max_tokens",
                     usage=AnthropicUsage(input_tokens=0, output_tokens=0),
+                )
+            # A rate limit is retryable and must not collapse to 502, which
+            # tells the Anthropic SDK the upstream is broken rather than busy.
+            # JSONResponse, not HTTPException: the global handler rewrites
+            # detail bodies to error.type=api_error.
+            if err.subtype == "assistant_rate_limit":
+                detail = _rate_limit_detail(err)
+                return JSONResponse(
+                    status_code=429,
+                    headers={"Retry-After": str(_retry_after_seconds(err.resets_at))},
+                    content={
+                        "type": "error",
+                        "error": {
+                            "type": "rate_limit_error",
+                            "message": _safe_assistant_error_message(err.subtype),
+                            **detail,
+                        },
+                    },
                 )
             raise HTTPException(
                 status_code=502,
@@ -2872,6 +3003,7 @@ async def get_auth_status(request: Request):
     return {
         "claude_code_auth": auth_info,
         "cli_health": _auth.cli_health.as_dict(),
+        "quota": quota_tracker.snapshot(),
         "server_info": {
             "api_key_required": bool(active_api_key),
             "api_key_source": (
@@ -2882,6 +3014,22 @@ async def get_auth_status(request: Request):
             "version": "1.0.0",
         },
     }
+
+
+@app.get("/v1/usage")
+@rate_limit_endpoint("general")
+async def get_usage(
+    request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+):
+    """Report the Claude subscription quota the CLI last told us about.
+
+    Per window (five_hour, seven_day, seven_day_opus, seven_day_sonnet,
+    overage): status, utilization, reset time, and whether the reading is
+    stale. Windows appear only once the CLI has reported them, so an idle
+    wrapper returns an empty set rather than a guess.
+    """
+    await verify_api_key(request, credentials)
+    return quota_tracker.snapshot()
 
 
 @app.get("/v1/sessions/stats")

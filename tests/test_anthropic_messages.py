@@ -245,5 +245,51 @@ class TestAnthropicMessagesCliHealthGate:
         assert body["error"]["code"] == "claude_cli_not_authenticated"
 
 
+class TestAnthropicMessagesRateLimit:
+    """A rate limit must reach the Anthropic SDK as 429, not 502. Every
+    subtype except error_max_turns used to collapse to 502, which reads as a
+    broken upstream rather than a busy one and stops clients retrying."""
+
+    def test_messages_returns_429_with_reset_details(self, monkeypatch):
+        import time
+
+        from fastapi.testclient import TestClient
+
+        from src import main as main_mod
+        from src.claude_cli import ClaudeResultError
+
+        reset = int(time.time()) + 1800
+
+        async def fake_run_completion(*args, **kwargs):
+            yield {"subtype": "success"}
+
+        def fake_parse(_messages):
+            raise ClaudeResultError(
+                subtype="assistant_rate_limit",
+                errors=["rate_limit"],
+                resets_at=reset,
+                rate_limit_type="five_hour",
+            )
+
+        monkeypatch.setattr(main_mod.claude_cli, "run_completion", fake_run_completion)
+        monkeypatch.setattr(main_mod.claude_cli, "parse_claude_message", fake_parse)
+
+        resp = TestClient(main_mod.app).post(
+            "/v1/messages",
+            json={
+                "model": "claude-sonnet-4-6",
+                "max_tokens": 16,
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+
+        assert resp.status_code == 429, resp.text
+        body = resp.json()
+        assert body["error"]["type"] == "rate_limit_error"
+        assert body["error"]["resets_at"] == reset
+        assert body["error"]["rate_limit_type"] == "five_hour"
+        assert int(resp.headers["retry-after"]) > 0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

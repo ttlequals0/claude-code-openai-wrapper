@@ -300,11 +300,39 @@ _CLI_AUTH_FAILURE_MARKERS = (
 )
 
 
+# Markers for a quota rejection, which is not an auth problem and must never
+# be reported as one. Checked before the auth markers.
+_CLI_QUOTA_FAILURE_MARKERS = (
+    "usage limit",
+    "rate limit",
+    "rate_limit",
+    "quota",
+)
+
+
 def _classify_probe_error(blob: str) -> str:
     lowered = (blob or "").lower()
+    if any(marker in lowered for marker in _CLI_QUOTA_FAILURE_MARKERS):
+        return "quota_exhausted"
     if any(marker in lowered for marker in _CLI_AUTH_FAILURE_MARKERS):
         return "auth_failure"
     return "unknown"
+
+
+def _classify_probe_exception(exc: BaseException) -> str:
+    """Classify a probe failure, preferring the SDK's structured fields.
+
+    claude-agent-sdk >= 0.2.14x raises ResultError carrying api_error_status
+    and the CLI's own prose, so the HTTP status decides before any string
+    matching. Text is the fallback for older or unstructured failures.
+    """
+    status = getattr(exc, "api_error_status", None)
+    if status == 429:
+        return "quota_exhausted"
+    if status in (401, 403):
+        return "auth_failure"
+    blob = " ".join(filter(None, [str(exc), getattr(exc, "result", None)]))
+    return _classify_probe_error(blob)
 
 
 @dataclass
@@ -312,8 +340,9 @@ class CliHealth:
     """Latest observed health of the Claude CLI auth path.
 
     The probe loop (run only when auth_method == 'claude_cli') refreshes this
-    on an interval; the chat / messages handlers consult `ok` to short-circuit
-    with HTTP 401 before round-tripping through the SDK.
+    on an interval. Only error_kind == 'auth_failure' short-circuits requests
+    with HTTP 401; every other kind falls through to the SDK, because a 401
+    tells clients their credentials are wrong and makes them stop retrying.
     """
 
     ok: bool = True
@@ -381,7 +410,7 @@ async def probe_cli_auth(cli=None) -> bool:
         return False
     except Exception as exc:  # noqa: BLE001 - the probe must never propagate
         message = str(exc)
-        kind = _classify_probe_error(message)
+        kind = _classify_probe_exception(exc)
         cli_health.mark_failed(kind, message)
         logger.warning(
             "cli_auth_probe_failed kind=%s error=%s",

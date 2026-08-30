@@ -5,6 +5,130 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.0] - 2026-08-30
+
+### Fixed
+
+- A Claude subscription usage limit was reported to every caller as HTTP 401
+  `authentication_error`. On 2026-08-30 this held for 13h26m (08:35:45 to
+  22:02:12 UTC), during which no request succeeded, while CLI authentication
+  was healthy the whole time. A downstream consumer treated the 401 as
+  non-retryable, opened its own circuit breaker, and dropped work instead of
+  deferring it.
+
+  The chain: the CLI emitted a result frame with `is_error: true`, an empty
+  `errors[]` and `subtype: "success"`, then exited non-zero. `verify_cli()`
+  caught the exception and returned a bare `False`. `probe_cli_auth` marked
+  `cli_health` failed with `kind=unknown`, correctly identifying it as not an
+  auth problem. But `_check_cli_auth_or_401` gated on `cli_health.ok` alone
+  and ignored `error_kind`, so every request got a 401 telling clients their
+  credentials were bad.
+
+  The gate now fires only on `error_kind == "auth_failure"`. Every other
+  failure kind falls through to the SDK, which reports an accurate status. The
+  "Run `claude /login`" remediation text stays on the genuine auth path, where
+  it is true.
+
+  `verify_cli()` propagates SDK exceptions rather than collapsing them to
+  `False`, so callers have something to classify, and drains the message
+  stream instead of breaking at the first assistant turn. That break tested
+  `getattr(message, "type")`, which no SDK dataclass has, so it never fired;
+  draining is also what makes the terminating result frame observable.
+
+  Classification now prefers `ResultError.api_error_status` (429 ->
+  `quota_exhausted`, 401/403 -> `auth_failure`) over string matching, falling
+  back to text markers with quota checked before auth.
+
+- `Retry-After` on a 429 was hardcoded to `"30"`, next to a comment saying to
+  use the upstream reset "once the SDK exposes them". It does, and the reset
+  now flows through. Capped at 3600s, because a rejected `seven_day` window
+  can reset days out and a client honouring the header verbatim would sleep
+  through it; the true reset is in the body as `resets_at`, `resets_at_iso`
+  and `seconds_until_reset`.
+
+- `/v1/messages` raised `HTTPException(502)` for every subtype except
+  `error_max_turns`, so a rate limit reached the Anthropic SDK as a broken
+  upstream rather than a busy one. It now returns 429 with an
+  Anthropic-shaped `rate_limit_error`.
+
+- The streaming SSE error frame was a generic `upstream_sdk_error` regardless
+  of subtype. The status line is already flushed by then, so the body is the
+  only channel left for the reset time; rate limits now carry it.
+
+- `parse_claude_message` claimed to detect rate-limit events but matched a
+  flat `{status, resets_at, rate_limit_type}` dict. The SDK nests those under
+  `rate_limit_info`, so the branch had been unreachable. Rewritten against the
+  real shape.
+
+- `retry_delay` never received the `retry_after` argument `calculate_delay`
+  already accepted, so a known reset had nowhere to go. Wired through and
+  bounded at 60s, since it runs inside a live request.
+
+### Added
+
+- `GET /v1/usage` reports the Claude subscription quota per rate-limit window
+  (`five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`, `overage`):
+  status, utilization, `resets_at` as unix and ISO, `seconds_until_reset`,
+  whether the reading came from live traffic or a probe, and whether it has
+  gone stale. Windows appear only once the CLI has reported them, so an idle
+  wrapper returns an empty set rather than a guess. `/v1/auth/status` gains a
+  matching `quota` block.
+
+  The data comes from the SDK's `RateLimitEvent`, which the CLI emits in-band
+  whenever rate-limit state changes. That is the same information
+  `claude-quota-proxy` scrapes from `anthropic-ratelimit-unified-*` response
+  headers, so no proxy in front of the API is needed. The wrapper had been
+  discarding it.
+
+  State is per-process: with `UVICORN_WORKERS > 1` each worker learns only
+  from the traffic it serves. Same caveat as the circuit breaker.
+
+- Opt-in 429 enforcement via `WRAPPER_QUOTA_ENFORCEMENT_ENABLED` (default
+  `false`). When on, a request is refused before the doomed round-trip while a
+  window is `rejected`. Off by default because refusing is a behaviour change
+  for existing callers; the accurate `Retry-After` above ships either way.
+
+- Quota refresh probes, triggered by request volume rather than the clock:
+  `WRAPPER_QUOTA_PROBE_EVERY_N_REQUESTS` (default 100) with a
+  `WRAPPER_QUOTA_PROBE_MIN_INTERVAL_SECONDS` floor (default 300); `0` disables.
+  The bundled CLI has no `usage` subcommand, so a probe is a real inference
+  call that spends the quota it measures. A plain interval would burn quota
+  while idle and still lag under load. The probe reuses `probe_cli_auth`, so
+  one call refreshes both auth and quota state.
+
+- `CLAUDE_CODE_OAUTH_TOKEN` passed through `docker-compose.yml`, so
+  subscription users authenticating with `claude auth` no longer need an API
+  key. Ported from RichardAtCT/claude-code-openai-wrapper#50 by safrano9999.
+
+### Changed
+
+- `claude-agent-sdk` 0.2.128 -> 0.2.148. Two upstream fixes matter here:
+  `ResultError` (a `ProcessError` subclass) now carries structured `subtype`,
+  `errors`, `result`, `api_error_status` and `terminal_reason`, so a failed run
+  can be classified without string matching; and `_error_result_text` prefers
+  `errors[]` -> `result` -> non-success `subtype` -> HTTP status, fixing the
+  self-contradictory "Claude Code returned an error result: success" text this
+  outage produced. `RateLimitInfo` field names are unchanged across the range.
+
+- `cryptography` floor raised to `>=50.0.0` for GHSA-g6cj-pr64-35w5
+  (Dependabot #29, high), superseding the `>=48.0.1` floor.
+
+- pip removed from the runtime image: the app virtualenv, system
+  site-packages, Poetry's own installer venv, and the virtualenv wheel cache.
+  pip vendors its own `msgpack` and `setuptools`, which had tripped the trivy
+  HIGH/CRITICAL gate on every build since 2.9.13 even though nothing imports
+  them. Trivy on the 2.10.0 image reports 28 HIGH/CRITICAL, all Debian 13
+  base-image CVEs with no fix available, and **zero** language-package
+  findings; 2.9.14 reported 31 including the pip-vendored pair.
+
+- `~/.claude` volume mount carries the `:Z` SELinux label, fixing permission
+  denied on SELinux-enforcing hosts and rootless Podman. Ignored where SELinux
+  is not enforcing. Ported from RichardAtCT/claude-code-openai-wrapper#49 by
+  safrano9999.
+
+- README version block corrected: it had been left at 2.9.12 through the
+  2.9.13 and 2.9.14 releases.
+
 ## [2.9.14] - 2026-08-03
 
 Supersedes the interim `2.9.13` image, which was built from this branch

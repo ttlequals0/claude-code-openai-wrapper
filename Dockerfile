@@ -5,8 +5,11 @@
 # -----------------------------------------------------------------------------
 FROM python:3.12-slim AS base
 
-# Install system deps (curl for Poetry installer).
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install system deps (curl for Poetry installer). The upgrade picks up base
+# image packages Debian has already patched but the published tag predates,
+# e.g. openssl CVE-2026-14456. Without it those ship as trivy HIGH findings
+# that look unfixable but are not.
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -41,6 +44,24 @@ sdk = importlib.metadata.version('claude-agent-sdk');\
 cli = pathlib.Path(claude_agent_sdk.__file__).parent / '_bundled' / 'claude';\
 open('/app/BUILD_INFO', 'w').write(f'claude-agent-sdk={sdk}\\nbundled_cli_present={cli.exists()}\\nbundled_cli_path={cli}\\n')\
 " || echo "BUILD_INFO stamp skipped (non-fatal)"
+
+# pip vendors its own msgpack and setuptools, which trip the trivy
+# HIGH/CRITICAL gate on every build even though nothing imports them. The
+# container never installs packages at runtime, so drop pip from both the app
+# virtualenv and system site-packages. Runs last: poetry needs pip to install.
+RUN VENV="$(poetry env info --path 2>/dev/null || true)"; \
+    for SITE in "$VENV"/lib/python*/site-packages \
+                /usr/local/lib/python*/site-packages \
+                /root/.local/share/pypoetry/venv/lib/python*/site-packages; do \
+        [ -d "$SITE" ] || continue; \
+        rm -rf "$SITE"/pip "$SITE"/pip-*.dist-info \
+               "$SITE"/setuptools "$SITE"/setuptools-*.dist-info \
+               "$SITE"/pkg_resources "$SITE"/_distutils_hack "$SITE"/distutils-precedence.pth; \
+    done; \
+    rm -rf "$VENV"/bin/pip* /usr/local/bin/pip* \
+           /root/.local/share/pypoetry/venv/bin/pip* \
+           /root/.cache/pip /root/.cache/virtualenv; \
+    poetry run python -c "import claude_agent_sdk, fastapi, uvicorn" || exit 1
 
 EXPOSE 8000
 

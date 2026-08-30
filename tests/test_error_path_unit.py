@@ -149,6 +149,105 @@ class TestParseClaudeMessageAssistantError:
         assert "rate_limit" in excinfo.value.errors
 
 
+class TestParseClaudeMessageRateLimitEvent:
+    """A rate-limit event nests its fields under rate_limit_info. The old
+    check looked for them at the top level, so it never fired."""
+
+    @staticmethod
+    def _parse(messages):
+        from unittest.mock import MagicMock
+
+        from src.claude_cli import ClaudeCodeCLI
+
+        cli = MagicMock()
+        cli.parse_claude_message = ClaudeCodeCLI.parse_claude_message.__get__(cli, ClaudeCodeCLI)
+        return cli.parse_claude_message(messages)
+
+    def test_rejected_event_raises_with_reset_details(self):
+        import pytest
+
+        reset = 1788135731
+        messages = [
+            {
+                "rate_limit_info": {
+                    "status": "rejected",
+                    "resets_at": reset,
+                    "rate_limit_type": "seven_day",
+                },
+                "session_id": "s-1",
+                "uuid": "u-1",
+            }
+        ]
+        with pytest.raises(ClaudeResultError) as excinfo:
+            self._parse(messages)
+        assert excinfo.value.subtype == "assistant_rate_limit"
+        assert excinfo.value.resets_at == reset
+        assert excinfo.value.rate_limit_type == "seven_day"
+
+    def test_allowed_event_does_not_raise(self):
+        messages = [
+            {
+                "rate_limit_info": {"status": "allowed", "rate_limit_type": "five_hour"},
+                "session_id": "s-1",
+                "uuid": "u-1",
+            },
+            {"subtype": "success", "result": "hello"},
+        ]
+        assert self._parse(messages) == "hello"
+
+
+class TestRetryAfterDerivation:
+    """Retry-After comes from the upstream reset, capped so a multi-day
+    window cannot tell a client to sleep through it."""
+
+    def test_uses_the_reported_reset(self):
+        import time
+
+        from src.main import _retry_after_seconds
+
+        assert 40 <= _retry_after_seconds(int(time.time()) + 45) <= 45
+
+    def test_caps_a_long_window(self):
+        import time
+
+        from src.main import _retry_after_seconds
+
+        assert _retry_after_seconds(int(time.time()) + 604800) == 3600
+
+    def test_falls_back_when_no_reset_reported(self):
+        from src.main import _retry_after_seconds
+
+        assert _retry_after_seconds(None) == 30
+
+    def test_rate_limit_response_carries_reset_detail(self):
+        import time
+
+        from src.main import _build_assistant_error_response, _retry_after_seconds
+
+        reset = int(time.time()) + 900
+        err = ClaudeResultError(
+            subtype="assistant_rate_limit",
+            errors=["rate_limit"],
+            resets_at=reset,
+            rate_limit_type="five_hour",
+        )
+        response = _build_assistant_error_response("req-1", "claude-opus-5", err)
+        body = _body(response)["error"]
+        assert response.status_code == 429
+        assert response.headers["retry-after"] == str(_retry_after_seconds(reset))
+        assert body["resets_at"] == reset
+        assert body["rate_limit_type"] == "five_hour"
+
+    def test_rate_limit_response_omits_detail_without_a_reset(self):
+        from src.main import _build_assistant_error_response
+
+        err = ClaudeResultError(subtype="assistant_rate_limit", errors=["rate_limit"])
+        response = _build_assistant_error_response("req-2", "claude-opus-5", err)
+        body = _body(response)["error"]
+        assert response.headers["retry-after"] == "30"
+        assert "resets_at" not in body
+
+
 class TestCliAuthFailureToFourOhOne:
     """Defense-in-depth: when ClaudeResultError carries CLI auth markers in
     its stderr_tail or error_message, _build_sdk_error_response must return
