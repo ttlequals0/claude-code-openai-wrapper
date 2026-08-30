@@ -39,6 +39,10 @@ services:
       # - ANTHROPIC_API_KEY=your-api-key
       # Option 2: Explicit auth method selection
       # - CLAUDE_AUTH_METHOD=cli  # Options: cli, api_key, bedrock, vertex
+      # Option 3: Subscription OAuth token, read by the bundled CLI. Passed
+      # through from the host so a subscription needs no API key. Unset when
+      # absent, which leaves auth detection on its default claude_cli path.
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
       # Optional: Set Claude's working directory (defaults to isolated temp dir)
       # - CLAUDE_CWD=/workspace
       # Optional: Enable debug logging
