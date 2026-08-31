@@ -304,3 +304,45 @@ class TestCliAuthFailureToFourOhOne:
         _build_sdk_error_response("req-cli-seed", "claude-sonnet-4-6", err)
         assert src.auth.cli_health.ok is False
         assert src.auth.cli_health.error_kind == "auth_failure"
+
+
+class TestQuotaExhaustedResponse:
+    def test_session_limit_result_returns_429_with_retry_after(self):
+        """The full chain for an exhausted quota: parse_claude_message on the
+        SDK's is_error 'success' result must land as 429 + Retry-After, not
+        the 502 'SDK returned success' it produced before."""
+        import time
+        from unittest.mock import MagicMock
+
+        from src.claude_cli import ClaudeCodeCLI
+
+        cli = MagicMock()
+        cli.parse_claude_message = ClaudeCodeCLI.parse_claude_message.__get__(
+            cli, ClaudeCodeCLI
+        )
+        messages = [
+            {
+                "subtype": "success",
+                "is_error": True,
+                "num_turns": 1,
+                "errors": [],
+                "result": "You've hit your session limit · resets 6pm (UTC)",
+            }
+        ]
+        try:
+            cli.parse_claude_message(messages)
+            raise AssertionError("expected ClaudeResultError")
+        except ClaudeResultError as err:
+            resp = _handle_claude_result_error("req-5", "claude-opus-5", err)
+
+        assert resp.status_code == 429
+        retry_after = int(resp.headers["Retry-After"])
+        assert 1 <= retry_after <= 3600
+        body = _body(resp)
+        assert body["error"]["code"] == "assistant_rate_limit"
+        assert body["error"]["resets_at"] > time.time()
+
+    def test_missing_error_detail_names_the_subtype_without_claiming_success(self):
+        err = ClaudeResultError(subtype="success", num_turns=1)
+        resp = _build_sdk_error_response("req-6", "claude-opus-5", err)
+        assert _body(resp)["error"]["message"] == "SDK returned an error result (subtype=success)"

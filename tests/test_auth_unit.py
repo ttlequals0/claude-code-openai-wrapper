@@ -602,3 +602,16 @@ def reset_auth_module():
     import src.auth
 
     importlib.reload(src.auth)
+
+
+class TestSessionLimitClassification:
+    def test_session_limit_prose_marks_quota_exhausted(self):
+        """The rolling window says 'session limit', wording the older marker
+        list missed; the probe then only classified it via HTTP status."""
+        import src.auth
+
+        blob = (
+            "Claude Code returned an error result: "
+            "You've hit your session limit · resets 6pm (UTC) (exit code: 1)"
+        )
+        assert src.auth._classify_probe_error(blob) == "quota_exhausted"

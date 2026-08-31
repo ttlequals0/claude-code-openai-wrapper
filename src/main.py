@@ -892,7 +892,11 @@ def _build_sdk_error_response(request_id: str, model: str, err: ClaudeResultErro
         content={
             "error": {
                 "message": err.error_message
-                or (err.errors[0] if err.errors else f"SDK returned {err.subtype}"),
+                or (
+                    err.errors[0]
+                    if err.errors
+                    else f"SDK returned an error result (subtype={err.subtype})"
+                ),
                 "type": "upstream_sdk_error",
                 "code": err.subtype or "unknown",
             }
