@@ -49,7 +49,9 @@ def is_quota_error_text(blob: str) -> bool:
 
 # "resets 6pm (UTC)" / "resets at 11:30pm (UTC)". The CLI always names the
 # hour in UTC.
-_RESET_CLOCK_RE = re.compile(r"resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", re.IGNORECASE)
+_RESET_CLOCK_RE = re.compile(
+    r"resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", re.IGNORECASE
+)
 
 
 def parse_reset_clock_time(text: str, now: Optional[float] = None) -> Optional[int]:
@@ -75,6 +77,7 @@ def parse_reset_clock_time(text: str, now: Optional[float] = None) -> Optional[i
     if candidate.timestamp() <= now_ts:
         candidate += timedelta(days=1)
     return int(candidate.timestamp())
+
 
 # Windows go stale when traffic is quiet and no event has arrived.
 _DEFAULT_STALE_AFTER_SECONDS = 900

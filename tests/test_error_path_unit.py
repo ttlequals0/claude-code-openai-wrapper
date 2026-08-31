@@ -317,9 +317,7 @@ class TestQuotaExhaustedResponse:
         from src.claude_cli import ClaudeCodeCLI
 
         cli = MagicMock()
-        cli.parse_claude_message = ClaudeCodeCLI.parse_claude_message.__get__(
-            cli, ClaudeCodeCLI
-        )
+        cli.parse_claude_message = ClaudeCodeCLI.parse_claude_message.__get__(cli, ClaudeCodeCLI)
         messages = [
             {
                 "subtype": "success",

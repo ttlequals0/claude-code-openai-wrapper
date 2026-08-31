@@ -852,9 +852,7 @@ class TestQuotaErrorClassification:
         from src.claude_cli import ClaudeCodeCLI
 
         mock = MagicMock()
-        mock.parse_claude_message = ClaudeCodeCLI.parse_claude_message.__get__(
-            mock, ClaudeCodeCLI
-        )
+        mock.parse_claude_message = ClaudeCodeCLI.parse_claude_message.__get__(mock, ClaudeCodeCLI)
         return mock
 
     def test_session_limit_result_is_rate_limit(self, cli):
