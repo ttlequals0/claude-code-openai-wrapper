@@ -18,14 +18,66 @@ circuit breaker; a shared store would be needed to change it.
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 # Source: claude_agent_sdk.types.RateLimitType.
 OVERAGE = "overage"
+
+# Text shapes the CLI uses when the subscription quota is exhausted. Shared
+# by the auth-probe classifier and the completion error path. "session limit"
+# is the wording of the rolling window ("You've hit your session limit"),
+# which the older marker list missed.
+QUOTA_ERROR_TEXT_MARKERS = (
+    "usage limit",
+    "session limit",
+    "rate limit",
+    "rate_limit",
+    "quota",
+)
+
+
+def is_quota_error_text(blob: str) -> bool:
+    """Whether an error's prose describes an exhausted quota."""
+    lowered = (blob or "").lower()
+    return any(marker in lowered for marker in QUOTA_ERROR_TEXT_MARKERS)
+
+
+# "resets 6pm (UTC)" / "resets at 11:30pm (UTC)". The CLI always names the
+# hour in UTC.
+_RESET_CLOCK_RE = re.compile(
+    r"resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", re.IGNORECASE
+)
+
+
+def parse_reset_clock_time(text: str, now: Optional[float] = None) -> Optional[int]:
+    """Epoch seconds for a CLI reset phrase like 'resets 6pm (UTC)'.
+
+    Takes the next future occurrence of the named UTC hour, rolling to
+    tomorrow when it has already passed today. Returns None when the text
+    names no reset time.
+    """
+    match = _RESET_CLOCK_RE.search(text or "")
+    if not match:
+        return None
+    hour = int(match.group(1))
+    minute = int(match.group(2) or 0)
+    if hour < 1 or hour > 12 or minute > 59:
+        return None
+    hour %= 12
+    if match.group(3).lower() == "pm":
+        hour += 12
+    now_ts = time.time() if now is None else now
+    base = datetime.fromtimestamp(now_ts, tz=timezone.utc)
+    candidate = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate.timestamp() <= now_ts:
+        candidate += timedelta(days=1)
+    return int(candidate.timestamp())
+
 
 # Windows go stale when traffic is quiet and no event has arrived.
 _DEFAULT_STALE_AFTER_SECONDS = 900

@@ -304,3 +304,72 @@ class TestQuotaTrackerConfigFromEnv:
     def test_truthy_spellings_enable_enforcement(self, monkeypatch, raw):
         monkeypatch.setenv("WRAPPER_QUOTA_ENFORCEMENT_ENABLED", raw)
         assert quota_enforcement_enabled() is True
+
+
+class TestQuotaErrorText:
+    def test_session_limit_wording_matches(self):
+        from src.quota_tracker import is_quota_error_text
+
+        assert is_quota_error_text(
+            "Claude Code returned an error result: You've hit your session limit"
+        )
+
+    def test_usage_limit_and_quota_match(self):
+        from src.quota_tracker import is_quota_error_text
+
+        assert is_quota_error_text("usage limit reached|resets_at")
+        assert is_quota_error_text("upstream quota exhausted")
+
+    def test_unrelated_text_does_not_match(self):
+        from src.quota_tracker import is_quota_error_text
+
+        assert not is_quota_error_text("connection reset by peer")
+        assert not is_quota_error_text("")
+        assert not is_quota_error_text(None)
+
+
+class TestParseResetClockTime:
+    # 2026-08-31 17:22:16 UTC, the timestamp of the observed stall.
+    NOW = 1788196936.0
+
+    def test_pm_hour_later_today(self):
+        from src.quota_tracker import parse_reset_clock_time
+
+        resets = parse_reset_clock_time(
+            "You've hit your session limit · resets 6pm (UTC)", now=self.NOW
+        )
+        # 18:00 UTC the same day.
+        assert resets is not None
+        assert resets - self.NOW == pytest.approx(2264, abs=1)
+
+    def test_hour_already_passed_rolls_to_tomorrow(self):
+        from src.quota_tracker import parse_reset_clock_time
+
+        resets = parse_reset_clock_time("resets 3am (UTC)", now=self.NOW)
+        assert resets is not None
+        assert resets > self.NOW
+        assert (resets - self.NOW) < 24 * 3600
+
+    def test_minutes_and_at_are_accepted(self):
+        from src.quota_tracker import parse_reset_clock_time
+
+        resets = parse_reset_clock_time("resets at 11:30pm (UTC)", now=self.NOW)
+        assert resets is not None
+        assert (resets - self.NOW) == pytest.approx(22064, abs=1)
+
+    def test_twelve_pm_is_noon_and_twelve_am_is_midnight(self):
+        from src.quota_tracker import parse_reset_clock_time
+
+        noon = parse_reset_clock_time("resets 12pm (UTC)", now=self.NOW)
+        midnight = parse_reset_clock_time("resets 12am (UTC)", now=self.NOW)
+        assert noon is not None and midnight is not None
+        # Both already passed or land tomorrow relative to 13:22 UTC.
+        assert (noon - self.NOW) < 24 * 3600
+        assert (midnight - self.NOW) < 24 * 3600
+
+    def test_no_reset_phrase_returns_none(self):
+        from src.quota_tracker import parse_reset_clock_time
+
+        assert parse_reset_clock_time("You've hit your session limit") is None
+        assert parse_reset_clock_time("resets soon") is None
+        assert parse_reset_clock_time("") is None

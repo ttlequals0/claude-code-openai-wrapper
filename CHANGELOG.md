@@ -5,6 +5,42 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.2] - 2026-08-31
+
+### Fixed
+
+- An exhausted subscription quota answered 502 instead of 429, after holding
+  the caller's connection open for minutes. Observed 2026-08-31: the CLI
+  exits 1 with "You've hit your session limit - resets 6pm (UTC)" after
+  emitting `ResultMessage(subtype='success', is_error=True)`; the retry loop
+  retried it inline (10 attempts, 60s waits, per request), and when it gave
+  up, the unrecognized error mapped to
+  `502 {"message": "SDK returned success", "type": "upstream_sdk_error"}`
+  with no reset time anywhere in the response. A caller with its own
+  rate-limit handling (a queue that pauses until reset) never saw a signal
+  it could act on.
+
+  Three changes close that path:
+
+  - Quota rejections fail fast. A query error carrying HTTP 429 or
+    quota-shaped prose is never retried inline; it surfaces immediately.
+  - Error results whose prose describes an exhausted quota (session limit,
+    usage limit, rate limit) classify as `assistant_rate_limit`, which the
+    HTTP layer already maps to 429 with `Retry-After` and reset fields in
+    the body.
+  - The reset hour the CLI names ("resets 6pm (UTC)") is parsed into a real
+    epoch, used for `Retry-After`, and recorded into the quota tracker so
+    `/v1/usage` and the opt-in enforcement gate know about a rejection no
+    `RateLimitEvent` reported.
+
+- The "session limit" wording was missing from the quota text markers, so
+  the auth probe only classified it through the HTTP status; the marker
+  list is now shared between the probe classifier and the completion error
+  path.
+- A 502 for an error result with no detail no longer claims
+  "SDK returned success"; it names the subtype as
+  "SDK returned an error result (subtype=...)".
+
 ## [2.10.1] - 2026-08-30
 
 ### Fixed
