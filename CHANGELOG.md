@@ -5,6 +5,19 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.0] - 2026-09-20
+
+### Changed
+
+- Bump `claude-agent-sdk` 0.2.148 to 0.2.152 (supersedes #45).
+
+### Security
+
+- Drop the runtime `nltk` pin. nltk is only required by the dev-only `safety`
+  tool, and CVE-2026-81726 (GHSA-8mgp-746c-j5xp, path traversal in
+  model-artifact APIs) has no patched release. nltk is now dev-only, so it no
+  longer ships in the `--only main` production image.
+
 ## [2.10.3] - 2026-09-20
 
 ### Security
