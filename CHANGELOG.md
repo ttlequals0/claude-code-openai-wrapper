@@ -5,6 +5,16 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.3] - 2026-09-20
+
+### Security
+
+- Bump `anyio` to >=4.14.2 (locked 4.15.1), closing GHSA-82r6-8w77-94w6
+  (TLSStream IDNA 2003 host-name encoding enabling TLS certificate spoofing,
+  critical) and GHSA-5p39-cfhj-2xmp (process-pool workers blocking on
+  undrained stderr, medium). Pinned as a direct constraint because it is a
+  transitive dependency and Dependabot cannot bump it otherwise.
+
 ## [2.10.2] - 2026-08-31
 
 ### Fixed
