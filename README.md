@@ -4,10 +4,11 @@ OpenAI API-compatible wrapper for Claude Code. Drop it in front of any OpenAI cl
 
 ## Version
 
-**Current:** 2.10.1
+**Current:** 2.10.3
 
 Highlights of recent releases (full history in [CHANGELOG.md](./CHANGELOG.md)):
 
+- **2.10.3** - Security: `anyio` >=4.14.2 (locked 4.15.1) closes GHSA-82r6-8w77-94w6 (TLSStream IDNA 2003 host encoding enabling TLS certificate spoofing, critical) and GHSA-5p39-cfhj-2xmp (process-pool workers block on undrained stderr, medium).
 - **2.10.1** - `/v1/usage` was missing the `seven_day` window and reported a null `utilization` everywhere. The SDK models only the representative window, but the CLI sends every window under `raw.unifiedWindows`, which is the only place utilization appears. Since the 2026-08-30 outage ran far longer than a five-hour window can explain, the weekly cap is the likely cause and `seven_day` was exactly what was not being reported. Adds `closest_to_limit` and `binding_window`, and surfaces `disabled_reason` on the overage pool.
 - **2.10.0** - Fixed a 13.5-hour outage on 2026-08-30 where a subscription usage limit was reported to every caller as HTTP 401 `authentication_error`. Only a genuine auth failure returns 401 now. New `GET /v1/usage` reports quota per rate-limit window, read from the SDK's `RateLimitEvent` instead of a proxy. `Retry-After` comes from the upstream reset rather than a hardcoded 30s, `/v1/messages` stops collapsing a rate limit to 502, and `WRAPPER_QUOTA_ENFORCEMENT_ENABLED` adds opt-in 429 blocking. `claude-agent-sdk` 0.2.128 -> 0.2.148, `cryptography` floor >=50.0.0 (Dependabot #29). pip removed from the runtime image, clearing the last two language-package trivy findings.
 - **2.9.14** - JSON mode relocates the caller's system prompt into the user turn, because the Agent SDK treats `options.system_prompt` as a persona rather than binding instructions. Multiple system messages are joined instead of collapsing to the last one. `claude-agent-sdk` 0.2.127 -> 0.2.128.
@@ -137,7 +138,7 @@ docker run -d -p 8000:8000 \
 docker run -d -p 8000:8000 \
   -v ~/.claude:/root/.claude \
   --name claude-wrapper \
-  ttlequals0/claude-code-openai-wrapper:2.10.1
+  ttlequals0/claude-code-openai-wrapper:2.10.3
 
 # Or build locally (prod stage is the default target)
 docker build --platform linux/amd64 -t claude-wrapper:local .
