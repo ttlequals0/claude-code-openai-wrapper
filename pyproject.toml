@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "claude-code-openai-wrapper"
-version = "2.10.3"
+version = "2.11.0"
 description = "OpenAI API-compatible wrapper for Claude Code"
 authors = ["Richard Atkinson <richardatk01@gmail.com>"]
 readme = "README.md"
@@ -28,7 +28,7 @@ python-multipart = ">=0.0.31"
 # Pin the SDK exactly; bump deliberately and regenerate poetry.lock in the
 # same commit. 2.10.0: 0.2.128 -> 0.2.148. Re-check RateLimitInfo field names
 # on each bump; the wrapper reads them off the message stream.
-claude-agent-sdk = {version = "0.2.148", extras = ["otel"]}
+claude-agent-sdk = {version = "0.2.152", extras = ["otel"]}
 slowapi = "^0.1.9"
 
 # Security floors for transitive dependencies. Each one pinned here is a
@@ -53,7 +53,10 @@ slowapi = "^0.1.9"
 # - Authlib: via claude-agent-sdk
 # - mcp: >=1.28.1 closes Dependabot #26-28 (GHSA-hvrp-rf83-w775,
 #   GHSA-jpw9-pfvf-9f58, GHSA-vj7q-gjh5-988w)
-# - nltk: >=3.10.0 closes Dependabot #24 (GHSA-p4gq-832x-fm9v)
+# - nltk: NOT pinned in main. It is only required by the dev-only `safety`
+#   tool, and CVE-2026-81726 (GHSA-8mgp-746c-j5xp) has no fix. Keeping it out
+#   of [tool.poetry.dependencies] leaves it dev-only so it never ships in the
+#   `--only main` production image.
 # - anyio: >=4.14.2 closes GHSA-82r6-8w77-94w6 (TLSStream IDNA 2003 host
 #   encoding -> TLS cert spoofing, critical) and GHSA-5p39-cfhj-2xmp
 #   (process-pool workers block on undrained stderr, medium). Transitive
@@ -65,7 +68,6 @@ pyjwt = ">=2.13.0"
 joserfc = ">=1.6.7"
 authlib = ">=1.6.9"
 mcp = ">=1.28.1"
-nltk = ">=3.10.0"
 anyio = ">=4.14.2"
 
 [tool.poetry.group.dev.dependencies]
