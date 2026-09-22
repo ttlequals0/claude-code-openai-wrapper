@@ -5,6 +5,34 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.12.0] - 2026-09-22
+
+### Added
+
+- `claude-opus-5-5` (Opus 5.5): 1M context, 128K max output, $4/$20 per MTok,
+  cache read $0.20 (0.05x input). Overload fallback is `claude-sonnet-5`.
+- `claude-fable-5-1` (Fable 5.1): 1M context, 128K max output, $10/$50 per
+  MTok, cache read $0.25 (0.025x input).
+
+### Changed
+
+- Bump `claude-agent-sdk` 0.2.152 to 0.2.157 (supersedes #49). `RateLimitInfo`
+  field names unchanged.
+- Sonnet 5 cost tracking now uses $2/$10 per MTok. Anthropic made the launch
+  price standard and cancelled the move to $3/$15.
+- README model tables: Fable 5, Opus 5, Opus 4.8 and Opus 4.7 moved to Legacy.
+  Opus 4.1, Opus 4 and Sonnet 4 are listed as retired on the Claude API (still
+  served on Bedrock and Google Cloud, so they stay in the catalogue).
+- Documented `CLAUDE_CODE_OAUTH_TOKEN` in the README env table. Removed the
+  unused `CLAUDE_CLI_PATH` from `.env.example`; nothing reads it.
+
+### Security
+
+- Remove the dev-only `safety` package. It was not run anywhere (CI uses
+  pip-audit) and was the only thing pulling in `nltk`, which has no fix for
+  CVE-2026-81726 (GHSA-8mgp-746c-j5xp, Dependabot #35). nltk is now out of
+  `poetry.lock` entirely.
+
 ## [2.11.0] - 2026-09-20
 
 ### Changed

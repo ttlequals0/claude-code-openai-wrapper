@@ -23,6 +23,31 @@ class TestCalculateCost:
         cost = calculate_cost("claude-haiku-4-5-20251001", usage)
         assert cost == pytest.approx(6.0)
 
+    def test_sonnet_5_pricing(self):
+        usage = UsageRecord(input_tokens=1_000_000, output_tokens=1_000_000)
+        cost = calculate_cost("claude-sonnet-5", usage)
+        assert cost == pytest.approx(12.0)
+
+    def test_opus_55_pricing(self):
+        usage = UsageRecord(
+            input_tokens=1_000_000,
+            output_tokens=1_000_000,
+            cache_read_tokens=1_000_000,
+            cache_creation_tokens=1_000_000,
+        )
+        cost = calculate_cost("claude-opus-5-5", usage)
+        assert cost == pytest.approx(4.0 + 20.0 + 0.20 + 5.0)
+
+    def test_fable_51_pricing(self):
+        usage = UsageRecord(
+            input_tokens=1_000_000,
+            output_tokens=1_000_000,
+            cache_read_tokens=1_000_000,
+            cache_creation_tokens=1_000_000,
+        )
+        cost = calculate_cost("claude-fable-5-1", usage)
+        assert cost == pytest.approx(10.0 + 50.0 + 0.25 + 12.50)
+
     def test_cache_tokens(self):
         usage = UsageRecord(cache_read_tokens=1_000_000, cache_creation_tokens=1_000_000)
         cost = calculate_cost("claude-sonnet-4-6", usage)
