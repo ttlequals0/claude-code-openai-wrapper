@@ -4,10 +4,11 @@ OpenAI API-compatible wrapper for Claude Code. Drop it in front of any OpenAI cl
 
 ## Version
 
-**Current:** 2.11.0
+**Current:** 2.12.0
 
 Highlights of recent releases (full history in [CHANGELOG.md](./CHANGELOG.md)):
 
+- **2.12.0** - Added `claude-opus-5-5` (Opus 5.5, $4/$20 MTok) and `claude-fable-5-1` (Fable 5.1, $10/$50 MTok), both 1M context / 128K max output. Sonnet 5 cost tracking moved to $2/$10 MTok, now its standard price. `claude-agent-sdk` 0.2.152 to 0.2.157. Dropped the unused dev-only `safety` package, which takes `nltk` (CVE-2026-81726, Dependabot #35) out of the lock file entirely.
 - **2.11.0** - `claude-agent-sdk` 0.2.148 to 0.2.152. Drop the runtime `nltk` pin (dev-only via `safety`) so it no longer ships in the production image; CVE-2026-81726 has no upstream fix.
 - **2.10.3** - Security: `anyio` >=4.14.2 (locked 4.15.1) closes GHSA-82r6-8w77-94w6 (TLSStream IDNA 2003 host encoding enabling TLS certificate spoofing, critical) and GHSA-5p39-cfhj-2xmp (process-pool workers block on undrained stderr, medium).
 - **2.10.1** - `/v1/usage` was missing the `seven_day` window and reported a null `utilization` everywhere. The SDK models only the representative window, but the CLI sends every window under `raw.unifiedWindows`, which is the only place utilization appears. Since the 2026-08-30 outage ran far longer than a five-hour window can explain, the weekly cap is the likely cause and `seven_day` was exactly what was not being reported. Adds `closest_to_limit` and `binding_window`, and surfaces `disabled_reason` on the overage pool.
@@ -28,7 +29,7 @@ Highlights of recent releases (full history in [CHANGELOG.md](./CHANGELOG.md)):
 
 ## Status
 
-Production ready. **738 tests passing (31 skipped)**. Streaming works. Sessions work. JSON mode works. Function calling works. Tools are off by default for speed - pass `enable_tools: true` to turn them on. Auth supports API key, Bedrock, Vertex AI, and CLI.
+Production ready. **758 tests passing (31 skipped)**. Streaming works. Sessions work. JSON mode works. Function calling works. Tools are off by default for speed - pass `enable_tools: true` to turn them on. Auth supports API key, Bedrock, Vertex AI, and CLI.
 
 ## Quick Start
 
@@ -186,6 +187,7 @@ Listed in roughly the order you will reach for them.
 | `CLAUDE_CWD` | Working directory Claude Code runs in | isolated temp dir |
 | `CLAUDE_AUTH_METHOD` | `cli`, `api_key`, `bedrock`, `vertex` | auto-detect |
 | `API_KEY` | Require this key on every request; prompts at startup if unset | interactive prompt |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Subscription OAuth token, read by the bundled Claude CLI (not the wrapper). Alternative to `ANTHROPIC_API_KEY` for `cli` auth. | - |
 | `ANTHROPIC_API_KEY` | Direct API key (for `api_key` auth). Optional; also unlocks live `/v1/models` discovery and dynamic latest-Sonnet default. | - |
 | `CLAUDE_CODE_USE_BEDROCK` | Enable AWS Bedrock backend | `false` |
 | `AWS_REGION` / `AWS_DEFAULT_REGION` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Bedrock credentials | - |
@@ -302,34 +304,38 @@ Claude-specific options via HTTP headers:
 
 ## Supported Models
 
-Model IDs, context windows, and pricing are sourced from the Anthropic models docs (`platform.claude.com/docs/en/about-claude/models/overview`) and mirrored in `src/constants.py`.
+Model IDs, context windows, and pricing are sourced from the Anthropic models docs (`platform.claude.com/docs/en/models/overview`, pricing page) and mirrored in `src/constants.py`.
 
 With `ANTHROPIC_API_KEY` set, `/v1/models` returns Anthropic's live catalogue (cached for `MODEL_LIST_CACHE_TTL_SECONDS`, default 1 hour) and the wrapper picks the latest Sonnet as `DEFAULT_MODEL` at startup. Without it (Bedrock, Vertex, or Claude CLI auth), the static list below is served and `claude-sonnet-5` is the fallback. `CLAUDE_MODELS_OVERRIDE=a,b,c` pins the list regardless of auth.
 
 ### Latest
 | Model | Context | Max Output | Input $/MTok | Output $/MTok |
 |-------|---------|-----------|-------------|--------------|
-| `claude-fable-5` | 1M | 128K | $10 | $50 |
-| `claude-opus-5` | 1M | 128K | $5 | $25 |
-| `claude-sonnet-5` (default) | 1M | 128K | $3 | $15 |
-| `claude-opus-4-8` | 1M | 128K | $5 | $25 |
-| `claude-opus-4-7` | 1M | 128K | $5 | $25 |
+| `claude-fable-5-1` | 1M | 128K | $10 | $50 |
+| `claude-opus-5-5` | 1M | 128K | $4 | $20 |
+| `claude-sonnet-5` (default) | 1M | 128K | $2 | $10 |
 | `claude-haiku-4-5-20251001` | 200K | 64K | $1 | $5 |
+
+Cache reads are 0.1x input except Fable 5.1 (0.025x, $0.25/MTok) and Opus 5.5 (0.05x, $0.20/MTok).
 
 ### Legacy (active, consider migrating)
 | Model | Context | Max Output | Input $/MTok | Output $/MTok |
 |-------|---------|-----------|-------------|--------------|
+| `claude-fable-5` | 1M | 128K | $10 | $50 |
+| `claude-opus-5` | 1M | 128K | $5 | $25 |
+| `claude-opus-4-8` | 1M | 128K | $5 | $25 |
+| `claude-opus-4-7` | 1M | 128K | $5 | $25 |
 | `claude-opus-4-6` | 1M | 128K | $5 | $25 |
 | `claude-sonnet-4-6` | 1M | 64K | $3 | $15 |
 | `claude-opus-4-5-20251101` | 200K | 64K | $5 | $25 |
 | `claude-sonnet-4-5-20250929` | 200K | 64K | $3 | $15 |
-| `claude-opus-4-1-20250805` | 200K | 32K | $15 | $75 |
 
-### Deprecated (retires 2026-06-15)
+### Retired on the Claude API (Bedrock / Google Cloud only)
 | Model | Context | Max Output | Input $/MTok | Output $/MTok | Replacement |
 |-------|---------|-----------|-------------|--------------|-------------|
+| `claude-opus-4-1-20250805` | 200K | 32K | $15 | $75 | `claude-opus-5-5` |
 | `claude-sonnet-4-20250514` | 200K | 64K | $3 | $15 | `claude-sonnet-5` |
-| `claude-opus-4-20250514` | 200K | 32K | $15 | $75 | `claude-opus-5` |
+| `claude-opus-4-20250514` | 200K | 32K | $15 | $75 | `claude-opus-5-5` |
 
 **Note:** Claude 3.x models are not supported by the Claude Agent SDK.
 

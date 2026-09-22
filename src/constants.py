@@ -102,6 +102,16 @@ _DEFAULT_MODEL_META = {
 }
 
 _MODEL_OVERRIDES = {
+    "claude-fable-5-1": {
+        "context_window": 1_000_000,
+        "default_max_output": 64_000,
+        "max_output_limit": 128_000,
+    },
+    "claude-opus-5-5": {
+        "context_window": 1_000_000,
+        "default_max_output": 64_000,
+        "max_output_limit": 128_000,
+    },
     "claude-fable-5": {
         "context_window": 1_000_000,
         "default_max_output": 64_000,
@@ -143,6 +153,8 @@ _MODEL_OVERRIDES = {
 # rebuilding the image via CLAUDE_MODELS_OVERRIDE=model-a,model-b.
 # NOTE: Claude Agent SDK only supports Claude 4+ models, not Claude 3.x.
 _ALL_MODEL_IDS = [
+    "claude-fable-5-1",
+    "claude-opus-5-5",
     "claude-fable-5",
     "claude-opus-5",
     "claude-sonnet-5",
@@ -203,18 +215,18 @@ _PRICING_SONNET = {"input": 3.0, "output": 15.0, "cache_read": 0.30, "cache_writ
 _PRICING_OPUS = {"input": 5.0, "output": 25.0, "cache_read": 0.50, "cache_write": 6.25}
 _PRICING_OPUS_LEGACY = {"input": 15.0, "output": 75.0, "cache_read": 1.50, "cache_write": 18.75}
 _PRICING_HAIKU_45 = {"input": 1.0, "output": 5.0, "cache_read": 0.10, "cache_write": 1.25}
-# Fable 5: input/output ($10/$50 per MTok) are Anthropic's published rates.
-# cache_read (0.1x input) and cache_write (1.25x input, 5-minute TTL) are
-# derived from the same ratios the other tiers in this file use, pending a
-# published Fable 5 cache price.
 _PRICING_FABLE = {"input": 10.0, "output": 50.0, "cache_read": 1.00, "cache_write": 12.50}
+# Newer tiers break the 0.1x cache-read ratio: Fable 5.1 is 0.025x, Opus 5.5 is 0.05x.
+_PRICING_FABLE_51 = {"input": 10.0, "output": 50.0, "cache_read": 0.25, "cache_write": 12.50}
+_PRICING_OPUS_55 = {"input": 4.0, "output": 20.0, "cache_read": 0.20, "cache_write": 5.0}
+_PRICING_SONNET_5 = {"input": 2.0, "output": 10.0, "cache_read": 0.20, "cache_write": 2.50}
 
 MODEL_PRICING = {
+    "claude-fable-5-1": _PRICING_FABLE_51,
     "claude-fable-5": _PRICING_FABLE,
-    # Sonnet 5 standard pricing ($3/$15) matches the Sonnet tier. Introductory
-    # pricing of $2/$10 per MTok applies through 2026-08-31 but is not encoded
-    # here so the cost tracker reflects steady-state rates.
-    "claude-sonnet-5": _PRICING_SONNET,
+    "claude-opus-5-5": _PRICING_OPUS_55,
+    # $2/$10 became Sonnet 5's standard price; the planned move to $3/$15 was cancelled.
+    "claude-sonnet-5": _PRICING_SONNET_5,
     "claude-opus-5": _PRICING_OPUS,
     "claude-opus-4-8": _PRICING_OPUS,
     "claude-opus-4-7": _PRICING_OPUS,
@@ -234,6 +246,7 @@ WEB_SEARCH_COST_USD = 0.01
 # Fallback model mapping: when an Opus model is overloaded, fall back to Sonnet
 # Sourced from Claude Code's FallbackTriggeredError pattern
 MODEL_FALLBACK_MAP = {
+    "claude-opus-5-5": "claude-sonnet-5",
     "claude-opus-5": "claude-sonnet-5",
     "claude-opus-4-8": "claude-sonnet-4-6",
     "claude-opus-4-7": "claude-sonnet-4-6",
