@@ -5,6 +5,20 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.12.1] - 2026-09-30
+
+### Fixed
+
+- Update `claude-agent-sdk` to 0.2.162, which bundles Claude Code 2.1.285. The previous bundled CLI could not serve `claude-opus-5-5`, which requires Claude Code 2.1.280 or newer.
+- Return a specific upgrade-required error for incompatible bundled CLI versions, and recognize expired CLI authentication in SDK result messages. These responses do not expose raw SDK result text.
+- Correct documented runtime defaults and remove stale test counts and example image versions.
+- Verify the bundled CLI version during the image build and record it in `BUILD_INFO`. Missing, incompatible, or non-executable CLI binaries now fail the build.
+
+### Security
+
+- Exclude local agent instructions, logs, and build artifacts from the image context.
+- Raise the PyJWT minimum to 2.14.0 and lock 2.15.1 to fix the JWT validation advisories found by the release dependency scan.
+
 ## [2.12.0] - 2026-09-22
 
 ### Added

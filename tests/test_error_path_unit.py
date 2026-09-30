@@ -7,11 +7,18 @@ as message content.
 """
 
 import json
+import asyncio
 
+import pytest
+from fastapi.testclient import TestClient
+
+from src import auth, main as main_mod
 from src.claude_cli import ClaudeResultError
+from src.models import ChatCompletionRequest, Message
 from src.main import (
     _build_error_max_turns_response,
     _build_sdk_error_response,
+    _safe_sdk_result_message,
     _handle_claude_result_error,
 )
 
@@ -58,6 +65,128 @@ class TestSdkErrorResponse:
         assert body["error"]["type"] == "upstream_sdk_error"
         assert body["error"]["code"] == "error_during_execution"
         assert body["error"]["message"] == "upstream timeout"
+
+    def test_unsupported_model_cli_version_returns_safe_nonretryable_detail(self):
+        raw = (
+            "API Error: 400 Claude Code 2.1.277 does not support this model; "
+            "version 2.1.280 or newer is required. Run 'claude update', then retry. "
+            "Prompt: private prompt"
+        )
+        err = ClaudeResultError(subtype="success", result=raw)
+        resp = _build_sdk_error_response("req-version", "claude-sonnet-4-6", err)
+        body = _body(resp)["error"]
+        assert resp.status_code == 400
+        assert body["type"] == "invalid_request_error"
+        assert body["code"] == "claude_cli_upgrade_required"
+        assert body["message"] == (
+            "The wrapper's bundled Claude Code CLI does not support this model. "
+            "Upgrade the wrapper and retry."
+        )
+        assert "2.1.277" not in json.dumps(body)
+        assert "private prompt" not in json.dumps(body)
+
+    def test_expired_oauth_result_uses_existing_static_auth_response(self):
+        err = ClaudeResultError(
+            subtype="success",
+            result="Failed to authenticate: OAuth session expired and could not be refreshed",
+        )
+        resp = _build_sdk_error_response("req-auth", "claude-sonnet-4-6", err)
+        body = _body(resp)["error"]
+        assert resp.status_code == 401
+        assert body["code"] == "claude_cli_not_authenticated"
+        assert "OAuth session expired" not in body["message"]
+
+    def test_auth_result_does_not_store_private_prose_in_cli_health(self):
+        raw = (
+            "Failed to authenticate: OAuth session expired and could not be refreshed; token=secret"
+        )
+        err = ClaudeResultError(subtype="success", result=raw)
+        try:
+            _build_sdk_error_response("req-auth-private", "claude-sonnet-4-6", err)
+            assert "secret" not in (auth.cli_health.as_dict()["error_message"] or "")
+        finally:
+            auth.cli_health.mark_ok()
+
+    def test_flattened_version_error_is_classified_and_sanitized(self):
+        raw = (
+            "Claude SDK returned an error result: API Error: 400 Claude Code 2.1.277 "
+            "does not support this model; version 2.1.280 or newer is required. "
+            "Prompt: private prompt token=secret"
+        )
+        err = ClaudeResultError(subtype="error_during_execution", error_message=raw)
+        resp = _build_sdk_error_response("req-version-flat", "claude-sonnet-4-6", err)
+        body = _body(resp)["error"]
+        assert resp.status_code == 400
+        assert body["code"] == "claude_cli_upgrade_required"
+        assert "private prompt" not in json.dumps(body)
+        assert "secret" not in json.dumps(body)
+
+    def test_unknown_result_prose_is_not_reflected(self):
+        err = ClaudeResultError(subtype="success", result="private prompt and token=secret")
+        assert _safe_sdk_result_message(err) == "SDK returned an error result (subtype=success)"
+
+    def test_unrelated_refresh_error_is_not_classified_as_auth(self):
+        err = ClaudeResultError(subtype="success", result="Cache update could not be refreshed")
+        resp = _build_sdk_error_response("req-refresh", "claude-sonnet-4-6", err)
+        assert resp.status_code == 502
+
+    def test_version_error_ending_in_401_is_not_classified_as_auth(self):
+        err = ClaudeResultError(
+            subtype="success",
+            result=(
+                "API Error: 400 Claude Code 2.1.401 does not support this model; "
+                "version 2.1.280 or newer is required."
+            ),
+        )
+        resp = _build_sdk_error_response("req-version-401", "claude-sonnet-4-6", err)
+        assert resp.status_code == 400
+        assert _body(resp)["error"]["code"] == "claude_cli_upgrade_required"
+
+
+class TestSafeErrorTransportDetails:
+    @pytest.fixture
+    def unsupported_model_error(self, monkeypatch):
+        raw = (
+            "API Error: 400 Claude Code 2.1.277 does not support this model; "
+            "version 2.1.280 or newer is required. Prompt: private prompt"
+        )
+
+        async def fake_run_completion(**kwargs):
+            yield {"subtype": "success", "is_error": True, "result": raw}
+
+        monkeypatch.setattr(main_mod.claude_cli, "run_completion", fake_run_completion)
+
+    def test_streaming_error_uses_safe_upgrade_detail(self, unsupported_model_error):
+        request = ChatCompletionRequest(
+            model="claude-sonnet-4-6",
+            messages=[Message(role="user", content="hello")],
+            stream=True,
+        )
+        chunks = asyncio.run(
+            _collect_stream(main_mod.generate_streaming_response(request, "req-stream"))
+        )
+        payload = "".join(chunks)
+        assert "claude_cli_upgrade_required" in payload
+        assert "private prompt" not in payload
+
+    def test_anthropic_messages_error_uses_safe_upgrade_detail(self, unsupported_model_error):
+        response = TestClient(main_mod.app).post(
+            "/v1/messages",
+            json={
+                "model": "claude-sonnet-4-6",
+                "max_tokens": 16,
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+        body = response.json()
+        assert response.status_code == 400
+        assert body["error"]["type"] == "invalid_request_error"
+        assert body["error"]["code"] == "claude_cli_upgrade_required"
+        assert "private prompt" not in response.text
+
+
+async def _collect_stream(stream):
+    return [chunk async for chunk in stream]
 
 
 class TestHandleClaudeResultError:

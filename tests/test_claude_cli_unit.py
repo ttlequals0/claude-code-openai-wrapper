@@ -12,6 +12,7 @@ import tempfile
 import sys
 from unittest.mock import MagicMock, patch, AsyncMock
 from pathlib import Path
+from src.claude_cli import ClaudeResultError
 
 
 class TestClaudeCodeCLIParseMessage:
@@ -907,6 +908,20 @@ class TestQuotaErrorClassification:
         with pytest.raises(ClaudeResultError) as exc_info:
             cli.parse_claude_message(messages)
         assert exc_info.value.subtype == "success"
+
+    def test_error_result_prose_is_retained_for_internal_classification(self, cli):
+        prose = "Failed to authenticate: OAuth session expired and could not be refreshed"
+        with pytest.raises(ClaudeResultError) as exc_info:
+            cli.parse_claude_message([{"subtype": "success", "is_error": True, "result": prose}])
+        assert exc_info.value.result == prose
+        assert exc_info.value.error_message is None
+
+    def test_successful_result_prose_is_not_treated_as_error(self, cli):
+        prose = "The wrapper says Claude Code does not support this model."
+        assert (
+            cli.parse_claude_message([{"subtype": "success", "is_error": False, "result": prose}])
+            == prose
+        )
 
     def test_quota_error_records_the_parsed_reset(self):
         from src.claude_cli import _quota_result_error

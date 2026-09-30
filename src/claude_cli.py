@@ -79,6 +79,8 @@ class ClaudeResultError(Exception):
         stderr_tail: Optional[str] = None,
         resets_at: Optional[int] = None,
         rate_limit_type: Optional[str] = None,
+        result: Optional[str] = None,
+        error_detail: Optional[str] = None,
     ):
         self.subtype = subtype
         self.num_turns = num_turns
@@ -89,6 +91,8 @@ class ClaudeResultError(Exception):
         # Set only for rate-limit results; drives a real Retry-After.
         self.resets_at = resets_at
         self.rate_limit_type = rate_limit_type
+        self.result = result
+        self.error_detail = error_detail
         detail = error_message or (self.errors[0] if self.errors else subtype)
         super().__init__(f"Claude SDK returned {subtype} after {num_turns} turns: {detail}")
 
@@ -446,6 +450,7 @@ class ClaudeCodeCLI:
         # message so it answers 429, not a generic 502.
         first_error = None
         blob_parts = []
+        result_parts = []
         for message in messages:
             subtype = message.get("subtype")
             is_error = message.get("is_error") is True
@@ -453,6 +458,9 @@ class ClaudeCodeCLI:
                 if first_error is None:
                     first_error = message
                 blob_parts.append(_error_text_blob(message))
+                result = message.get("result")
+                if isinstance(result, str) and result:
+                    result_parts.append(result)
         if first_error is not None:
             blob = " ".join(part for part in blob_parts if part)
             if is_quota_error_text(blob):
@@ -464,6 +472,8 @@ class ClaudeCodeCLI:
                 stop_reason=first_error.get("stop_reason"),
                 error_message=first_error.get("error_message"),
                 stderr_tail=first_error.get("stderr_tail"),
+                result=" ".join(result_parts) or None,
+                error_detail=blob or None,
             )
 
         # AssistantMessage.error carries upstream-API failure details (rate

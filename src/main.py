@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 import logging
+import re
 import secrets
 import string
 import time
@@ -861,9 +862,9 @@ def _build_sdk_error_response(request_id: str, model: str, err: ClaudeResultErro
             f"claude_sdk_error stderr tail (request_id={request_id}):\n" f"{err.stderr_tail}"
         )
 
-    blob = " ".join(filter(None, [err.error_message, err.stderr_tail]))
-    if _classify_probe_error(blob) == "auth_failure":
-        _auth.cli_health.mark_failed("auth_failure", blob)
+    upgrade_required = _is_cli_upgrade_required(err)
+    if not upgrade_required and _is_cli_auth_failure(err):
+        _auth.cli_health.mark_failed("auth_failure", _safe_sdk_result_message(err))
         logger.warning(
             _kv(
                 "claude_sdk_cli_auth_failed",
@@ -876,11 +877,7 @@ def _build_sdk_error_response(request_id: str, model: str, err: ClaudeResultErro
             status_code=401,
             content={
                 "error": {
-                    "message": (
-                        "Claude CLI is not authenticated. Run `claude /login` "
-                        "on the wrapper host and restart, or set "
-                        "ANTHROPIC_API_KEY."
-                    ),
+                    "message": _safe_sdk_result_message(err),
                     "type": "authentication_error",
                     "code": "claude_cli_not_authenticated",
                 }
@@ -888,20 +885,67 @@ def _build_sdk_error_response(request_id: str, model: str, err: ClaudeResultErro
         )
 
     return JSONResponse(
-        status_code=502,
+        status_code=400 if upgrade_required else 502,
         content={
             "error": {
-                "message": err.error_message
-                or (
-                    err.errors[0]
-                    if err.errors
-                    else f"SDK returned an error result (subtype={err.subtype})"
-                ),
-                "type": "upstream_sdk_error",
-                "code": err.subtype or "unknown",
+                "message": _safe_sdk_result_message(err),
+                "type": "invalid_request_error" if upgrade_required else "upstream_sdk_error",
+                "code": _sdk_result_error_code(err),
             }
         },
     )
+
+
+def _safe_sdk_result_message(err: ClaudeResultError) -> str:
+    """Return actionable, fixed text for recognized result failures only."""
+    if _is_cli_upgrade_required(err):
+        return (
+            "The wrapper's bundled Claude Code CLI does not support this model. "
+            "Upgrade the wrapper and retry."
+        )
+    if _is_cli_auth_failure(err):
+        return (
+            "Claude CLI is not authenticated. Run `claude /login` on the wrapper host and "
+            "restart, or set ANTHROPIC_API_KEY."
+        )
+    return err.error_message or (
+        err.errors[0] if err.errors else f"SDK returned an error result (subtype={err.subtype})"
+    )
+
+
+def _is_cli_upgrade_required(err: ClaudeResultError) -> bool:
+    return bool(
+        re.search(
+            r"Claude Code \d+\.\d+\.\d+ does not support this model;\s*"
+            r"version \d+\.\d+\.\d+ or newer is required",
+            _sdk_error_blob(err),
+            re.IGNORECASE,
+        )
+    )
+
+
+def _sdk_error_blob(err: ClaudeResultError) -> str:
+    return " ".join(
+        str(value)
+        for value in (
+            err.error_detail,
+            err.result,
+            err.error_message,
+            err.stderr_tail,
+            *(err.errors or []),
+        )
+        if value
+    )
+
+
+def _is_cli_auth_failure(err: ClaudeResultError) -> bool:
+    return _classify_probe_error(_sdk_error_blob(err)) == "auth_failure"
+
+
+def _sdk_result_error_code(err: ClaudeResultError) -> str:
+    if _is_cli_upgrade_required(err):
+        return "claude_cli_upgrade_required"
+    return err.subtype or "unknown"
 
 
 # Map AssistantMessage error literals to HTTP status codes so each upstream
@@ -1433,15 +1477,20 @@ async def generate_streaming_response(
                         errors=sdk_error.errors,
                     )
                 )
+                upgrade_required = _is_cli_upgrade_required(sdk_error)
+                auth_failure = not upgrade_required and _is_cli_auth_failure(sdk_error)
                 err_body = {
-                    "message": sdk_error.error_message
-                    or (
-                        sdk_error.errors[0]
-                        if sdk_error.errors
-                        else f"SDK returned {sdk_error.subtype}"
+                    "message": _safe_sdk_result_message(sdk_error),
+                    "type": (
+                        "invalid_request_error"
+                        if upgrade_required
+                        else "authentication_error" if auth_failure else "upstream_sdk_error"
                     ),
-                    "type": "upstream_sdk_error",
-                    "code": sdk_error.subtype or "unknown",
+                    "code": (
+                        "claude_cli_not_authenticated"
+                        if auth_failure
+                        else _sdk_result_error_code(sdk_error)
+                    ),
                 }
                 # The status line is already flushed, so the reset time can
                 # only travel in the body. Without it a streaming caller has
@@ -1996,6 +2045,30 @@ async def anthropic_messages(
                             "type": "rate_limit_error",
                             "message": _safe_assistant_error_message(err.subtype),
                             **detail,
+                        },
+                    },
+                )
+            if _is_cli_upgrade_required(err):
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "type": "error",
+                        "error": {
+                            "type": "invalid_request_error",
+                            "code": _sdk_result_error_code(err),
+                            "message": _safe_sdk_result_message(err),
+                        },
+                    },
+                )
+            if _is_cli_auth_failure(err):
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "type": "error",
+                        "error": {
+                            "type": "authentication_error",
+                            "code": "claude_cli_not_authenticated",
+                            "message": _safe_sdk_result_message(err),
                         },
                     },
                 )
