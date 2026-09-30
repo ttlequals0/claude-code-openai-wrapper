@@ -298,6 +298,8 @@ _CLI_AUTH_FAILURE_MARKERS = (
     "please run /login",
     "invalid api key",
     "authentication_error",
+    "oauth session expired",
+    "failed to authenticate",
     "401",
 )
 

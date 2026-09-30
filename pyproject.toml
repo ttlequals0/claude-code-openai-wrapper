@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "claude-code-openai-wrapper"
-version = "2.12.0"
+version = "2.12.1"
 description = "OpenAI API-compatible wrapper for Claude Code"
 authors = ["Richard Atkinson <richardatk01@gmail.com>"]
 readme = "README.md"
@@ -26,9 +26,9 @@ sse-starlette = "^2.1.3"
 # Content-Length buffers the whole body in memory). 0.0.31 covers all four.
 python-multipart = ">=0.0.31"
 # Pin the SDK exactly; bump deliberately and regenerate poetry.lock in the
-# same commit. 2.12.0: 0.2.152 -> 0.2.157. Re-check RateLimitInfo field names
+# same commit. Re-check RateLimitInfo field names
 # on each bump; the wrapper reads them off the message stream.
-claude-agent-sdk = {version = "0.2.157", extras = ["otel"]}
+claude-agent-sdk = {version = "0.2.162", extras = ["otel"]}
 slowapi = "^0.1.9"
 
 # Security floors for transitive dependencies. Each one pinned here is a
@@ -44,7 +44,8 @@ slowapi = "^0.1.9"
 #    GHSA-mf9v-mfxr-j63j decompression-bomb safeguard bypass)
 # - cryptography: >=50.0.0 closes GHSA-g6cj-pr64-35w5 (Dependabot #29) and
 #   supersedes the >=48.0.1 floor for GHSA-537c-gmf6-5ccf (#23).
-# - PyJWT: floor raised to >=2.13.0 to close five alerts (#14-18), incl.
+# - PyJWT: >=2.14.0 fixes the September 2026 JWT validation advisories.
+#   The previous >=2.13.0 floor closed five alerts (#14-18), incl.
 #   GHSA-xgmm-8j9v-c9wx (public-key JWK accepted as HMAC secret -> forged
 #   HS256 tokens, high) and the PyJWKClient SSRF / DoS issues.
 # - joserfc: new floor >=1.6.7 closes GHSA-wphv-vfrh-23q5 (b64=false RFC7797
@@ -62,7 +63,7 @@ slowapi = "^0.1.9"
 starlette = ">=1.0.1"
 urllib3 = ">=2.7.0"
 cryptography = ">=50.0.0"
-pyjwt = ">=2.13.0"
+pyjwt = ">=2.14.0"
 joserfc = ">=1.6.7"
 authlib = ">=1.6.9"
 mcp = ">=1.28.1"

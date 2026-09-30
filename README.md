@@ -4,10 +4,11 @@ OpenAI API-compatible wrapper for Claude Code. Drop it in front of any OpenAI cl
 
 ## Version
 
-**Current:** 2.12.0
+**Current:** 2.12.1
 
 Highlights of recent releases (full history in [CHANGELOG.md](./CHANGELOG.md)):
 
+- **2.12.1** - Updated `claude-agent-sdk` to 0.2.162, which bundles Claude Code 2.1.285 and supports `claude-opus-5-5`.
 - **2.12.0** - Added `claude-opus-5-5` (Opus 5.5, $4/$20 MTok) and `claude-fable-5-1` (Fable 5.1, $10/$50 MTok), both 1M context / 128K max output. Sonnet 5 cost tracking moved to $2/$10 MTok, now its standard price. `claude-agent-sdk` 0.2.152 to 0.2.157. Dropped the unused dev-only `safety` package, which takes `nltk` (CVE-2026-81726, Dependabot #35) out of the lock file entirely.
 - **2.11.0** - `claude-agent-sdk` 0.2.148 to 0.2.152. Drop the runtime `nltk` pin (dev-only via `safety`) so it no longer ships in the production image; CVE-2026-81726 has no upstream fix.
 - **2.10.3** - Security: `anyio` >=4.14.2 (locked 4.15.1) closes GHSA-82r6-8w77-94w6 (TLSStream IDNA 2003 host encoding enabling TLS certificate spoofing, critical) and GHSA-5p39-cfhj-2xmp (process-pool workers block on undrained stderr, medium).
@@ -29,7 +30,7 @@ Highlights of recent releases (full history in [CHANGELOG.md](./CHANGELOG.md)):
 
 ## Status
 
-Production ready. **758 tests passing (31 skipped)**. Streaming works. Sessions work. JSON mode works. Function calling works. Tools are off by default for speed - pass `enable_tools: true` to turn them on. Auth supports API key, Bedrock, Vertex AI, and CLI.
+Production ready. Streaming, sessions, JSON mode, and function calling are supported. Tools are off by default for speed - pass `enable_tools: true` to turn them on. Auth supports API key, Bedrock, Vertex AI, and CLI.
 
 ## Quick Start
 
@@ -140,7 +141,7 @@ docker run -d -p 8000:8000 \
 docker run -d -p 8000:8000 \
   -v ~/.claude:/root/.claude \
   --name claude-wrapper \
-  ttlequals0/claude-code-openai-wrapper:2.11.0
+  ttlequals0/claude-code-openai-wrapper:2.12.1
 
 # Or build locally (prod stage is the default target)
 docker build --platform linux/amd64 -t claude-wrapper:local .
@@ -202,7 +203,7 @@ Listed in roughly the order you will reach for them.
 | `ANTHROPIC_MODELS_URL` | Override the live models endpoint. Point at a proxy or staging URL during testing. | `https://api.anthropic.com/v1/models` |
 | `ANTHROPIC_VERSION` | `anthropic-version` header sent to the Models API. | `2023-06-01` |
 | `ANTHROPIC_BETA` / `ANTHROPIC_BETA_HEADER` | Optional `anthropic-beta` header forwarded to the Models API for beta-gated features. | - |
-| `CLI_AUTH_PROBE_INTERVAL_SECONDS` | Background CLI-auth probe cadence when `CLAUDE_AUTH_METHOD=claude_cli`. Each probe is a 1-turn `query` (~$0.001 at Sonnet pricing). Only a failure classified `auth_failure` flips `cli_health.ok` and returns 401; `quota_exhausted` and `unknown` fall through to the SDK. Set `0` to disable. Ignored for non-cli auth methods. | `600` (10 min) |
+| `CLI_AUTH_PROBE_INTERVAL_SECONDS` | Background CLI-auth probe cadence when `CLAUDE_AUTH_METHOD=cli` (also accepts `claude_cli`). Each probe is a 1-turn `query` (~$0.001 at Sonnet pricing). Only a failure classified `auth_failure` flips `cli_health.ok` and returns 401; `quota_exhausted` and `unknown` fall through to the SDK. Set `0` to disable. Ignored for non-cli auth methods. | `600` (10 min) |
 | `WRAPPER_QUOTA_ENFORCEMENT_ENABLED` | Refuse requests with 429 while a quota window is `rejected`, rather than forwarding a call that cannot succeed. Off by default, since refusing changes behaviour for existing callers. | `false` |
 | `WRAPPER_QUOTA_PROBE_EVERY_N_REQUESTS` | Requests between quota refresh probes. The bundled CLI has no `usage` subcommand, so a probe is a real 1-turn call that spends the quota it measures. Set `0` to rely on live traffic alone. | `100` |
 | `WRAPPER_QUOTA_PROBE_MIN_INTERVAL_SECONDS` | Floor between quota probes so a burst cannot trigger a run of them. | `300` (5 min) |
@@ -211,11 +212,16 @@ Listed in roughly the order you will reach for them.
 | `VERBOSE` | Same unlock effect on `/v1/debug/request` | `false` |
 | `CORS_ORIGINS` | Allowed CORS origins (JSON array) | `["*"]` |
 | `REQUEST_CACHE_ENABLED` | Enable request-dedup cache | `false` |
-| `REQUEST_CACHE_TTL_SECONDS` | Cache entry TTL | service-managed |
-| `REQUEST_CACHE_MAX_SIZE` | Max cached entries | service-managed |
+| `REQUEST_CACHE_TTL_SECONDS` | Cache entry TTL | `60` seconds |
+| `REQUEST_CACHE_MAX_SIZE` | Max cached entries | `100` |
+| `WRAPPER_CIRCUIT_BREAKER_ENABLED` | Enable the upstream failure circuit breaker | `true` |
+| `WRAPPER_CIRCUIT_BREAKER_WINDOW_SECONDS` | Failure-rate measurement window | `60` seconds |
+| `WRAPPER_CIRCUIT_BREAKER_THRESHOLD` | Failure ratio that opens the breaker | `0.75` |
+| `WRAPPER_CIRCUIT_BREAKER_MIN_REQUESTS` | Minimum requests before the breaker can open | `20` |
+| `WRAPPER_CIRCUIT_BREAKER_OPEN_SECONDS` | Time before the breaker allows a probe request | `30` seconds |
 | `WRAPPER_DEFAULT_MAX_TURNS` | Default `max_turns` when caller does not enable tools | `3` |
 | `WRAPPER_MAP_MAX_TOKENS_TO_THINKING` | Map OpenAI `max_tokens` to Claude `max_thinking_tokens` (legacy) | `false` |
-| `WATCHDOG_ENABLED` | Enable CPU watchdog (for Docker) | `true` |
+| `WATCHDOG_ENABLED` | Enable CPU watchdog (for Docker) | `false` |
 | `WATCHDOG_CPU_THRESHOLD` / `WATCHDOG_INTERVAL` / `WATCHDOG_STRIKES` | Watchdog tuning | see `src/cpu_watchdog.py` |
 | `UVICORN_WORKERS` | Worker count for the prod image | `2` |
 | `RATE_LIMIT_ENABLED` / `RATE_LIMIT_*_PER_MINUTE` | See rate-limit section above | - |
@@ -313,7 +319,7 @@ With `ANTHROPIC_API_KEY` set, `/v1/models` returns Anthropic's live catalogue (c
 |-------|---------|-----------|-------------|--------------|
 | `claude-fable-5-1` | 1M | 128K | $10 | $50 |
 | `claude-opus-5-5` | 1M | 128K | $4 | $20 |
-| `claude-sonnet-5` (default) | 1M | 128K | $2 | $10 |
+| `claude-sonnet-5` (static fallback) | 1M | 128K | $2 | $10 |
 | `claude-haiku-4-5-20251001` | 200K | 64K | $1 | $5 |
 
 Cache reads are 0.1x input except Fable 5.1 (0.025x, $0.25/MTok) and Opus 5.5 (0.05x, $0.20/MTok).
@@ -566,8 +572,11 @@ succeed.
 
 ## Testing
 
+The suite covers API endpoints, authentication, models, sessions, streaming,
+caching, quota tracking, and tool and function calling.
+
 ```bash
-# Run the full test suite (738 tests, ~8 s on a laptop)
+# Run the full test suite
 poetry run pytest tests/
 
 # Quick endpoint test (server must be running)
