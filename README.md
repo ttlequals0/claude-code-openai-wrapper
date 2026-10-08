@@ -4,10 +4,11 @@ OpenAI API-compatible wrapper for Claude Code. Drop it in front of any OpenAI cl
 
 ## Version
 
-**Current:** 2.12.1
+**Current:** 2.13.0
 
 Highlights of recent releases (full history in [CHANGELOG.md](./CHANGELOG.md)):
 
+- **2.13.0** - Added `claude-sonnet-5-5` (Sonnet 5.5, $2/$10 MTok) and `claude-haiku-5-5` (Haiku 5.5, $0.10/$0.50 MTok under 100K tokens, 5x over), both 1M context / 128K max output. `FAST_MODEL` default moves to `claude-haiku-5-5`; `claude-opus-5-5` overload fallback and `DEFAULT_MODEL_FALLBACK` both move to `claude-sonnet-5-5`. Dropped `claude-opus-4-1-20250805`, `claude-sonnet-4-20250514`, and `claude-opus-4-20250514`, which the Anthropic Models API no longer serves.
 - **2.12.1** - Updated `claude-agent-sdk` to 0.2.162, which bundles Claude Code 2.1.285 and supports `claude-opus-5-5`.
 - **2.12.0** - Added `claude-opus-5-5` (Opus 5.5, $4/$20 MTok) and `claude-fable-5-1` (Fable 5.1, $10/$50 MTok), both 1M context / 128K max output. Sonnet 5 cost tracking moved to $2/$10 MTok, now its standard price. `claude-agent-sdk` 0.2.152 to 0.2.157. Dropped the unused dev-only `safety` package, which takes `nltk` (CVE-2026-81726, Dependabot #35) out of the lock file entirely.
 - **2.11.0** - `claude-agent-sdk` 0.2.148 to 0.2.152. Drop the runtime `nltk` pin (dev-only via `safety`) so it no longer ships in the production image; CVE-2026-81726 has no upstream fix.
@@ -90,7 +91,7 @@ Edit `.env`:
 PORT=8000
 MAX_TIMEOUT=600000           # milliseconds (10 min default)
 # CLAUDE_CWD=/path/to/workspace   # defaults to isolated temp dir
-# DEFAULT_MODEL=claude-sonnet-5   # override default model
+# DEFAULT_MODEL=claude-sonnet-5-5   # override default model
 ```
 
 ### Working Directory
@@ -141,7 +142,7 @@ docker run -d -p 8000:8000 \
 docker run -d -p 8000:8000 \
   -v ~/.claude:/root/.claude \
   --name claude-wrapper \
-  ttlequals0/claude-code-openai-wrapper:2.12.1
+  ttlequals0/claude-code-openai-wrapper:2.13.0
 
 # Or build locally (prod stage is the default target)
 docker build --platform linux/amd64 -t claude-wrapper:local .
@@ -194,8 +195,8 @@ Listed in roughly the order you will reach for them.
 | `AWS_REGION` / `AWS_DEFAULT_REGION` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Bedrock credentials | - |
 | `CLAUDE_CODE_USE_VERTEX` | Enable Google Vertex AI backend | `false` |
 | `ANTHROPIC_VERTEX_PROJECT_ID` / `CLOUD_ML_REGION` / `GOOGLE_APPLICATION_CREDENTIALS` | Vertex credentials | - |
-| `DEFAULT_MODEL` | Default model id when request omits one. When unset and `ANTHROPIC_API_KEY` is configured, the wrapper resolves the latest Sonnet at startup; otherwise falls back to `claude-sonnet-5`. | auto |
-| `FAST_MODEL` | Speed/cost-optimized model alias used internally. | `claude-haiku-4-5-20251001` |
+| `DEFAULT_MODEL` | Default model id when request omits one. When unset and `ANTHROPIC_API_KEY` is configured, the wrapper resolves the latest Sonnet at startup; otherwise falls back to `claude-sonnet-5-5`. | auto |
+| `FAST_MODEL` | Speed/cost-optimized model alias used internally. | `claude-haiku-5-5` |
 | `CLAUDE_MODELS_OVERRIDE` | Comma-separated model IDs to advertise via `/v1/models`. Takes precedence over both live and static lists. | - |
 | `MODEL_LIST_CACHE_TTL_SECONDS` | Cache TTL for live `/v1/models` results. | `3600` |
 | `MODEL_LIST_ERROR_TTL_SECONDS` | Short cache TTL applied when the live fetch fails so transient outages don't suppress live discovery for the full hour. | `60` |
@@ -312,17 +313,17 @@ Claude-specific options via HTTP headers:
 
 Model IDs, context windows, and pricing are sourced from the Anthropic models docs (`platform.claude.com/docs/en/models/overview`, pricing page) and mirrored in `src/constants.py`.
 
-With `ANTHROPIC_API_KEY` set, `/v1/models` returns Anthropic's live catalogue (cached for `MODEL_LIST_CACHE_TTL_SECONDS`, default 1 hour) and the wrapper picks the latest Sonnet as `DEFAULT_MODEL` at startup. Without it (Bedrock, Vertex, or Claude CLI auth), the static list below is served and `claude-sonnet-5` is the fallback. `CLAUDE_MODELS_OVERRIDE=a,b,c` pins the list regardless of auth.
+With `ANTHROPIC_API_KEY` set, `/v1/models` returns Anthropic's live catalogue (cached for `MODEL_LIST_CACHE_TTL_SECONDS`, default 1 hour) and the wrapper picks the latest Sonnet as `DEFAULT_MODEL` at startup. Without it (Bedrock, Vertex, or Claude CLI auth), the static list below is served and `claude-sonnet-5-5` is the fallback. `CLAUDE_MODELS_OVERRIDE=a,b,c` pins the list regardless of auth.
 
 ### Latest
 | Model | Context | Max Output | Input $/MTok | Output $/MTok |
 |-------|---------|-----------|-------------|--------------|
 | `claude-fable-5-1` | 1M | 128K | $10 | $50 |
 | `claude-opus-5-5` | 1M | 128K | $4 | $20 |
-| `claude-sonnet-5` (static fallback) | 1M | 128K | $2 | $10 |
-| `claude-haiku-4-5-20251001` | 200K | 64K | $1 | $5 |
+| `claude-sonnet-5-5` (static fallback) | 1M | 128K | $2 | $10 |
+| `claude-haiku-5-5` | 1M | 128K | $0.10 | $0.50 |
 
-Cache reads are 0.1x input except Fable 5.1 (0.025x, $0.25/MTok) and Opus 5.5 (0.05x, $0.20/MTok).
+Cache reads are 0.1x input except Fable 5.1 (0.025x, $0.25/MTok), Opus 5.5 (0.05x, $0.20/MTok), and Sonnet 5.5 (0.05x, $0.10/MTok). Haiku 5.5 prompts over 100K tokens bill at 5x the listed rate ($0.50/$2.50, cache read $0.05, cache write $0.625); the cost tracker uses the base tier.
 
 ### Legacy (active, consider migrating)
 | Model | Context | Max Output | Input $/MTok | Output $/MTok |
@@ -332,18 +333,13 @@ Cache reads are 0.1x input except Fable 5.1 (0.025x, $0.25/MTok) and Opus 5.5 (0
 | `claude-opus-4-8` | 1M | 128K | $5 | $25 |
 | `claude-opus-4-7` | 1M | 128K | $5 | $25 |
 | `claude-opus-4-6` | 1M | 128K | $5 | $25 |
+| `claude-sonnet-5` | 1M | 128K | $2 | $10 |
 | `claude-sonnet-4-6` | 1M | 64K | $3 | $15 |
 | `claude-opus-4-5-20251101` | 200K | 64K | $5 | $25 |
 | `claude-sonnet-4-5-20250929` | 200K | 64K | $3 | $15 |
+| `claude-haiku-4-5-20251001` | 200K | 64K | $1 | $5 |
 
-### Retired on the Claude API (Bedrock / Google Cloud only)
-| Model | Context | Max Output | Input $/MTok | Output $/MTok | Replacement |
-|-------|---------|-----------|-------------|--------------|-------------|
-| `claude-opus-4-1-20250805` | 200K | 32K | $15 | $75 | `claude-opus-5-5` |
-| `claude-sonnet-4-20250514` | 200K | 64K | $3 | $15 | `claude-sonnet-5` |
-| `claude-opus-4-20250514` | 200K | 32K | $15 | $75 | `claude-opus-5-5` |
-
-**Note:** Claude 3.x models are not supported by the Claude Agent SDK.
+**Note:** Claude 3.x models are not supported by the Claude Agent SDK. The three Claude 4-generation models the Anthropic Models API no longer serves (`claude-opus-4-1-20250805`, `claude-sonnet-4-20250514`, `claude-opus-4-20250514`) have been removed from this catalogue; they remain reachable only via Bedrock or Google Cloud, which this wrapper does not query for model discovery.
 
 ## Session Continuity
 
