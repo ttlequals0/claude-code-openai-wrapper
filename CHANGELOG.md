@@ -5,6 +5,37 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.13.0] - 2026-10-08
+
+### Added
+
+- `claude-sonnet-5-5` (Sonnet 5.5): 1M context, 128K max output, effort low..max,
+  adaptive thinking only (`disabled` not supported). $2/$10 per MTok, cache read
+  $0.10 (0.05x input), cache write $2.50. Overload fallback is `claude-opus-5-5`'s
+  new target (see Changed).
+- `claude-haiku-5-5` (Haiku 5.5): 1M context, 128K max output, effort low..max,
+  adaptive thinking (no `enabled`/budget_tokens). Pricing is tiered by prompt
+  size: up to 100K tokens $0.10/$0.50 per MTok, cache read $0.01, cache write
+  $0.125; over 100K tokens 5x that ($0.50/$2.50, cache read $0.05, cache write
+  $0.625). The cost tracker uses the base (under 100K) tier.
+
+### Changed
+
+- `FAST_MODEL` default moves from `claude-haiku-4-5-20251001` to `claude-haiku-5-5`.
+  Override via the `FAST_MODEL` env var is unaffected.
+- `claude-opus-5-5` overload fallback moves from `claude-sonnet-5` to
+  `claude-sonnet-5-5`, keeping the fallback within the same model generation.
+- `DEFAULT_MODEL_FALLBACK` moves from `claude-sonnet-5` to `claude-sonnet-5-5`,
+  so the static fallback used when live Sonnet resolution fails tracks the
+  newest Sonnet.
+
+### Removed
+
+- `claude-opus-4-1-20250805`, `claude-sonnet-4-20250514`, and
+  `claude-opus-4-20250514` are no longer served by the Anthropic Models API
+  (absent from `GET /v1/models` as of 2026-10-08) and are dropped from the
+  static model catalogue, metadata, pricing, and fallback tables.
+
 ## [2.12.1] - 2026-09-30
 
 ### Fixed

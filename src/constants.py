@@ -143,8 +143,16 @@ _MODEL_OVERRIDES = {
         "max_output_limit": 128_000,
     },
     "claude-sonnet-4-6": {"context_window": 1_000_000},
-    "claude-opus-4-1-20250805": {"default_max_output": 32_000, "max_output_limit": 32_000},
-    "claude-opus-4-20250514": {"default_max_output": 32_000, "max_output_limit": 32_000},
+    "claude-sonnet-5-5": {
+        "context_window": 1_000_000,
+        "default_max_output": 64_000,
+        "max_output_limit": 128_000,
+    },
+    "claude-haiku-5-5": {
+        "context_window": 1_000_000,
+        "default_max_output": 64_000,
+        "max_output_limit": 128_000,
+    },
 }
 
 # Static fallback list (order: newest first). Exposed by /v1/models and
@@ -155,6 +163,8 @@ _MODEL_OVERRIDES = {
 _ALL_MODEL_IDS = [
     "claude-fable-5-1",
     "claude-opus-5-5",
+    "claude-sonnet-5-5",
+    "claude-haiku-5-5",
     "claude-fable-5",
     "claude-opus-5",
     "claude-sonnet-5",
@@ -165,9 +175,6 @@ _ALL_MODEL_IDS = [
     "claude-opus-4-5-20251101",
     "claude-sonnet-4-5-20250929",
     "claude-haiku-4-5-20251001",
-    "claude-opus-4-1-20250805",
-    "claude-sonnet-4-20250514",
-    "claude-opus-4-20250514",
 ]
 
 MODEL_METADATA = {
@@ -192,13 +199,13 @@ CLAUDE_MODELS = (
 # stores it in RESOLVED_DEFAULT_MODEL. DEFAULT_MODEL_FALLBACK is used until/if
 # that resolution succeeds.
 DEFAULT_MODEL_ENV: Optional[str] = os.getenv("DEFAULT_MODEL")
-DEFAULT_MODEL_FALLBACK = "claude-sonnet-5"
+DEFAULT_MODEL_FALLBACK = "claude-sonnet-5-5"
 DEFAULT_MODEL = DEFAULT_MODEL_ENV or DEFAULT_MODEL_FALLBACK
 RESOLVED_DEFAULT_MODEL: Optional[str] = None
 
 # Fast model (for speed/cost optimization).
 # Can be overridden via FAST_MODEL environment variable.
-FAST_MODEL = os.getenv("FAST_MODEL", "claude-haiku-4-5-20251001")
+FAST_MODEL = os.getenv("FAST_MODEL", "claude-haiku-5-5")
 
 # Anthropic Models API configuration for dynamically refreshing /v1/models.
 ANTHROPIC_MODELS_URL = os.getenv("ANTHROPIC_MODELS_URL", "https://api.anthropic.com/v1/models")
@@ -213,18 +220,22 @@ MODEL_LIST_REQUEST_TIMEOUT_SECONDS = float(os.getenv("MODEL_LIST_REQUEST_TIMEOUT
 # Sourced from open-sourced Claude Code CLI (src/utils/modelCost.ts)
 _PRICING_SONNET = {"input": 3.0, "output": 15.0, "cache_read": 0.30, "cache_write": 3.75}
 _PRICING_OPUS = {"input": 5.0, "output": 25.0, "cache_read": 0.50, "cache_write": 6.25}
-_PRICING_OPUS_LEGACY = {"input": 15.0, "output": 75.0, "cache_read": 1.50, "cache_write": 18.75}
 _PRICING_HAIKU_45 = {"input": 1.0, "output": 5.0, "cache_read": 0.10, "cache_write": 1.25}
 _PRICING_FABLE = {"input": 10.0, "output": 50.0, "cache_read": 1.00, "cache_write": 12.50}
 # Newer tiers break the 0.1x cache-read ratio: Fable 5.1 is 0.025x, Opus 5.5 is 0.05x.
 _PRICING_FABLE_51 = {"input": 10.0, "output": 50.0, "cache_read": 0.25, "cache_write": 12.50}
 _PRICING_OPUS_55 = {"input": 4.0, "output": 20.0, "cache_read": 0.20, "cache_write": 5.0}
 _PRICING_SONNET_5 = {"input": 2.0, "output": 10.0, "cache_read": 0.20, "cache_write": 2.50}
+_PRICING_SONNET_55 = {"input": 2.0, "output": 10.0, "cache_read": 0.10, "cache_write": 2.50}
+# Prompts over 100K tokens are billed at 5x this tier; the tracker uses the base tier.
+_PRICING_HAIKU_55 = {"input": 0.10, "output": 0.50, "cache_read": 0.01, "cache_write": 0.125}
 
 MODEL_PRICING = {
     "claude-fable-5-1": _PRICING_FABLE_51,
     "claude-fable-5": _PRICING_FABLE,
     "claude-opus-5-5": _PRICING_OPUS_55,
+    "claude-sonnet-5-5": _PRICING_SONNET_55,
+    "claude-haiku-5-5": _PRICING_HAIKU_55,
     # $2/$10 became Sonnet 5's standard price; the planned move to $3/$15 was cancelled.
     "claude-sonnet-5": _PRICING_SONNET_5,
     "claude-opus-5": _PRICING_OPUS,
@@ -232,11 +243,8 @@ MODEL_PRICING = {
     "claude-opus-4-7": _PRICING_OPUS,
     "claude-opus-4-6": _PRICING_OPUS,
     "claude-opus-4-5-20251101": _PRICING_OPUS,
-    "claude-opus-4-1-20250805": _PRICING_OPUS_LEGACY,
-    "claude-opus-4-20250514": _PRICING_OPUS_LEGACY,
     "claude-sonnet-4-6": _PRICING_SONNET,
     "claude-sonnet-4-5-20250929": _PRICING_SONNET,
-    "claude-sonnet-4-20250514": _PRICING_SONNET,
     "claude-haiku-4-5-20251001": _PRICING_HAIKU_45,
 }
 
@@ -246,14 +254,12 @@ WEB_SEARCH_COST_USD = 0.01
 # Fallback model mapping: when an Opus model is overloaded, fall back to Sonnet
 # Sourced from Claude Code's FallbackTriggeredError pattern
 MODEL_FALLBACK_MAP = {
-    "claude-opus-5-5": "claude-sonnet-5",
+    "claude-opus-5-5": "claude-sonnet-5-5",
     "claude-opus-5": "claude-sonnet-5",
     "claude-opus-4-8": "claude-sonnet-4-6",
     "claude-opus-4-7": "claude-sonnet-4-6",
     "claude-opus-4-6": "claude-sonnet-4-6",
     "claude-opus-4-5-20251101": "claude-sonnet-4-5-20250929",
-    "claude-opus-4-1-20250805": "claude-sonnet-4-20250514",
-    "claude-opus-4-20250514": "claude-sonnet-4-20250514",
 }
 
 # Effort levels supported by Claude API

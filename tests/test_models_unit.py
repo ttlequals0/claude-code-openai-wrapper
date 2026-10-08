@@ -610,3 +610,70 @@ class TestAnthropicModels:
         assert response.role == "assistant"
         assert response.stop_reason == "end_turn"
         assert response.id.startswith("msg_")
+
+
+class TestModelCatalogue:
+    """Test the model catalogue in src/constants.py."""
+
+    RETIRED_MODEL_IDS = (
+        "claude-opus-4-1-20250805",
+        "claude-sonnet-4-20250514",
+        "claude-opus-4-20250514",
+    )
+    NEW_MODEL_IDS = ("claude-sonnet-5-5", "claude-haiku-5-5")
+
+    def test_new_models_in_default_catalogue(self):
+        """Haiku 5.5 and Sonnet 5.5 are in DEFAULT_CLAUDE_MODELS."""
+        from src.constants import DEFAULT_CLAUDE_MODELS
+
+        for model_id in self.NEW_MODEL_IDS:
+            assert model_id in DEFAULT_CLAUDE_MODELS
+
+    def test_new_models_have_1m_context_and_128k_output(self):
+        """Haiku 5.5 and Sonnet 5.5 carry 1M context / 128K max output metadata."""
+        from src.constants import MODEL_METADATA
+
+        for model_id in self.NEW_MODEL_IDS:
+            meta = MODEL_METADATA[model_id]
+            assert meta["context_window"] == 1_000_000
+            assert meta["default_max_output"] == 64_000
+            assert meta["max_output_limit"] == 128_000
+
+    def test_new_models_have_pricing_entries(self):
+        """Haiku 5.5 and Sonnet 5.5 have MODEL_PRICING entries."""
+        from src.constants import MODEL_PRICING
+
+        assert MODEL_PRICING["claude-sonnet-5-5"] == {
+            "input": 2.0,
+            "output": 10.0,
+            "cache_read": 0.10,
+            "cache_write": 2.50,
+        }
+        assert MODEL_PRICING["claude-haiku-5-5"] == {
+            "input": 0.10,
+            "output": 0.50,
+            "cache_read": 0.01,
+            "cache_write": 0.125,
+        }
+
+    def test_opus_55_falls_back_to_sonnet_55(self):
+        """Opus 5.5 overload fallback moves to Sonnet 5.5."""
+        from src.constants import MODEL_FALLBACK_MAP
+
+        assert MODEL_FALLBACK_MAP["claude-opus-5-5"] == "claude-sonnet-5-5"
+
+    def test_retired_ids_removed_from_every_table(self):
+        """Models no longer served by the API are gone from every catalogue table."""
+        from src.constants import (
+            DEFAULT_CLAUDE_MODELS,
+            MODEL_METADATA,
+            MODEL_PRICING,
+            MODEL_FALLBACK_MAP,
+        )
+
+        for model_id in self.RETIRED_MODEL_IDS:
+            assert model_id not in DEFAULT_CLAUDE_MODELS
+            assert model_id not in MODEL_METADATA
+            assert model_id not in MODEL_PRICING
+            assert model_id not in MODEL_FALLBACK_MAP
+            assert model_id not in MODEL_FALLBACK_MAP.values()
