@@ -90,10 +90,14 @@ CMD ["poetry", "run", "uvicorn", "src.main:app", \
      "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
 # -----------------------------------------------------------------------------
-# Prod stage: multi-worker, no reload. Default target for deployment images.
-# Override worker count via the UVICORN_WORKERS env var at runtime if needed.
+# Prod stage: no reload. Default target for deployment images.
+# Single worker by default: the quota tracker and circuit breaker are
+# in-process state, so >1 worker splits that state and /v1/usage answers from
+# whichever worker served the request. Request handling is async around the
+# SDK subprocess, so one worker still serves concurrent requests; override via
+# the UVICORN_WORKERS env var at runtime if a deployment needs more.
 # -----------------------------------------------------------------------------
 FROM base AS prod
-ENV UVICORN_WORKERS=2
+ENV UVICORN_WORKERS=1
 CMD ["sh", "-c", "poetry run uvicorn src.main:app \
     --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS} --no-access-log"]

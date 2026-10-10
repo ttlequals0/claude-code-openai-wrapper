@@ -24,8 +24,9 @@ services:
     environment:
       - PORT=8000
       - MAX_TIMEOUT=600000
-      # Worker count for the prod image. Default 2.
-      # - UVICORN_WORKERS=2
+      # Worker count for the prod image. Default 1: the quota tracker and
+      # circuit breaker are in-process state, so >1 worker splits it.
+      # - UVICORN_WORKERS=1
       # Default max_turns when the caller does not enable_tools. Raising from
       # the legacy 1 to 3 prevents error_max_turns on short prompts where the
       # agent engages extended thinking and needs a second turn to emit the
@@ -49,7 +50,7 @@ services:
       # - DEBUG_MODE=true
       # Optional: Rate limiting configuration
       # - RATE_LIMIT_ENABLED=true
-      # - RATE_LIMIT_CHAT_PER_MINUTE=10
+      # - RATE_LIMIT_CHAT_PER_MINUTE=120
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

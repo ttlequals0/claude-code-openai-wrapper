@@ -9,7 +9,12 @@ import logging
 
 from claude_agent_sdk import query, ClaudeAgentOptions, RateLimitEvent
 
-from src.quota_tracker import is_quota_error_text, parse_reset_clock_time, quota_tracker
+from src.quota_tracker import (
+    is_account_limit_text,
+    is_quota_error_text,
+    parse_reset_clock_time,
+    quota_tracker,
+)
 from src.retry import RetryState, retry_delay
 
 logger = logging.getLogger(__name__)
@@ -117,13 +122,17 @@ def _quota_result_error(blob: str, num_turns: Optional[int] = None) -> ClaudeRes
 
     resets_at comes from the CLI's own prose when it names a reset hour
     ('resets 6pm (UTC)'), else from the tracker's last observed rejected
-    window. The parsed rejection is recorded so /quota and the enforcement
-    gate know about a window no RateLimitEvent reported.
+    window. Claude Code's "session limit" wording names the rolling 5-hour
+    window, so it is recorded as five_hour rather than inventing a separate
+    window type. With no parsed reset, the rejection is still recorded, but
+    only when the prose names an account limit specifically; a bare 429 or
+    generic 'rate limit' text is not reason enough to mark the window
+    rejected on a guess.
     """
     resets_at = parse_reset_clock_time(blob) or quota_tracker.blocked_until() or None
-    if resets_at:
+    if resets_at is not None or is_account_limit_text(blob):
         quota_tracker.record(
-            {"status": "rejected", "rate_limit_type": "session_limit", "resets_at": resets_at},
+            {"status": "rejected", "rate_limit_type": "five_hour", "resets_at": resets_at},
             source="error_text",
         )
     return ClaudeResultError(
@@ -132,7 +141,7 @@ def _quota_result_error(blob: str, num_turns: Optional[int] = None) -> ClaudeRes
         errors=["rate_limit"],
         error_message=blob[:300] or None,
         resets_at=resets_at,
-        rate_limit_type="session_limit",
+        rate_limit_type="five_hour",
     )
 
 
@@ -483,12 +492,40 @@ class ClaudeCodeCLI:
         for message in messages:
             assistant_error = message.get("error")
             if isinstance(assistant_error, str) and assistant_error in _ASSISTANT_ERROR_VALUES:
+                resets_at = None
+                rate_limit_type = None
+                if assistant_error == "rate_limit":
+                    # No prose field here; the reset hour, if named, is in
+                    # the message's own content blocks ('resets 6pm (UTC)').
+                    # With no parsed reset, only record when the content
+                    # names an account limit specifically; a bare 429 or
+                    # generic 'rate limit' text is not reason enough to mark
+                    # the window rejected on a guess.
+                    content = message.get("content")
+                    blob = (
+                        " ".join(_extract_text_blocks(content)) if isinstance(content, list) else ""
+                    )
+                    resets_at = (
+                        parse_reset_clock_time(blob) or quota_tracker.blocked_until() or None
+                    )
+                    rate_limit_type = "five_hour"
+                    if resets_at is not None or is_account_limit_text(blob):
+                        quota_tracker.record(
+                            {
+                                "status": "rejected",
+                                "rate_limit_type": rate_limit_type,
+                                "resets_at": resets_at,
+                            },
+                            source="error_text",
+                        )
                 raise ClaudeResultError(
                     subtype=f"assistant_{assistant_error}",
                     num_turns=None,
                     errors=[assistant_error],
                     stop_reason=message.get("stop_reason"),
                     error_message=None,
+                    resets_at=resets_at,
+                    rate_limit_type=rate_limit_type,
                 )
 
         # Rate-limit events: status 'rejected' means the upstream cut us off,

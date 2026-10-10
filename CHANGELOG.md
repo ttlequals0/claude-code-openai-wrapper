@@ -5,6 +5,61 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.13.1] - 2026-10-10
+
+### Fixed
+
+- An exhausted account quota was reaching callers as a plain 429 while
+  `/v1/usage` kept reporting `blocked=false`: the CLI's literal
+  `error='rate_limit'` path (no prose) never parsed a reset time or recorded
+  the rejection, so the tracker never learned about it. The reset hour named
+  in the message's own content ("resets 6pm (UTC)") is now parsed and
+  recorded there too, the same as the other rejection path.
+- A rejection recorded with no reset time read as blocked forever in
+  `/v1/usage` and the enforcement gate. It now expires after
+  `WRAPPER_QUOTA_STALE_AFTER_SECONDS` from when it was observed. A rejection
+  whose reset time has already passed also stops reporting as `rejected`
+  rather than lingering until a newer event overwrites it; this applies to
+  the representative window too, so an expired rejection there now reports
+  `status: null` instead of a stale `rejected`.
+- The reset-hour parser accepted any parenthesised timezone name as if it
+  were UTC, misreading non-UTC hours. It now only trusts `(UTC)`, `(GMT)`,
+  `(Etc/UTC)`, or no timezone at all (the CLI's normal shape); any other
+  named zone falls back to no reset rather than a wrong one. It also rolled
+  to tomorrow for a reset named only a few seconds in the past (clock skew
+  between the CLI and the wrapper); that now only rolls over past a minute.
+- A rejection with no parsed reset time was recorded under `five_hour`
+  regardless of what the text said, so a bare 429 or a generic "rate limit"
+  mention could mark the window rejected on a guess. That now requires the
+  text to name an account limit specifically ("session limit", "usage
+  limit", "weekly limit", "limit reached").
+- Recording a rejection from error-text prose wiped the window's last known
+  utilization to null and could leave two windows flagged `representative`
+  at once (the new rejection and a stale one from an earlier event), making
+  `binding_window` ambiguous. It now carries the previous utilization
+  forward and clears `representative` on every other window.
+- An exhausted account quota (`assistant_rate_limit`) counted as a circuit
+  breaker failure, so a burst of rejections during a real quota exhaustion
+  could trip the breaker and fail-fast unrelated healthy traffic. Account
+  limits are no longer recorded to the breaker, as neither success nor
+  failure.
+
+### Changed
+
+- README: the per-version highlights list is replaced by a short Features section; release history stays in this file and on the GitHub releases page.
+- The session-limit rejection (Claude Code's rolling-window wording) is
+  recorded under the `five_hour` quota window instead of inventing a
+  separate `session_limit` window type, since that is the window it names.
+- `RATE_LIMIT_CHAT_PER_MINUTE` default raised from 10 to 120 per minute. The
+  old default rejected ordinary traffic via the wrapper's own per-IP limiter
+  well before the account's own quota ever became binding.
+- `UVICORN_WORKERS` default lowered from 2 to 1 for the prod image. The quota
+  tracker and circuit breaker are in-process state; more than one worker
+  splits that state across processes, so `/v1/usage` and the breaker answer
+  from whichever worker happened to serve the request. Request handling is
+  async around the SDK subprocess, so a single worker still serves
+  concurrent requests.
+
 ## [2.13.0] - 2026-10-08
 
 ### Added
