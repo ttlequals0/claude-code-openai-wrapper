@@ -1040,12 +1040,14 @@ def _handle_claude_result_error(
 
     Records the outcome against the circuit breaker so a burst of SDK
     failures across many requests trips the breaker and fails-fast future
-    traffic for a short cool-off period.
+    traffic for a short cool-off period. An exhausted account quota is not
+    a service failure, so it is recorded as neither success nor failure.
     """
     # error_max_turns still returned a 200 to the caller with finish_reason=
     # length; treat it as upstream "bad" for breaker purposes because from a
     # reliability perspective it's a failed completion.
-    sdk_circuit_breaker.record(success=False)
+    if err.subtype != "assistant_rate_limit":
+        sdk_circuit_breaker.record(success=False)
     if err.subtype == "error_max_turns":
         return _build_error_max_turns_response(request_id, model, err)
     if err.subtype in _ASSISTANT_ERROR_STATUS:

@@ -47,10 +47,13 @@ def is_quota_error_text(blob: str) -> bool:
     return any(marker in lowered for marker in QUOTA_ERROR_TEXT_MARKERS)
 
 
-# "resets 6pm (UTC)" / "resets at 11:30pm (UTC)". The CLI always names the
-# hour in UTC.
+# "resets 6pm (UTC)" / "resets at 11:30pm (UTC)" / "resets 10:50am (UTC)".
+# The trailing "(ZONE)" is optional and, when present, only "UTC" is trusted;
+# any other named zone is not something we can convert correctly, so it
+# falls back to no reset rather than silently misreading it as UTC.
 _RESET_CLOCK_RE = re.compile(
-    r"resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", re.IGNORECASE
+    r"resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b(?:\s*\(([^)]*)\))?",
+    re.IGNORECASE,
 )
 
 
@@ -59,10 +62,13 @@ def parse_reset_clock_time(text: str, now: Optional[float] = None) -> Optional[i
 
     Takes the next future occurrence of the named UTC hour, rolling to
     tomorrow when it has already passed today. Returns None when the text
-    names no reset time.
+    names no reset time, or names a timezone other than UTC.
     """
     match = _RESET_CLOCK_RE.search(text or "")
     if not match:
+        return None
+    tz_name = match.group(4)
+    if tz_name is not None and tz_name.strip().upper() != "UTC":
         return None
     hour = int(match.group(1))
     minute = int(match.group(2) or 0)
@@ -154,9 +160,27 @@ class QuotaWindow:
             return None
         return max(0, int(self.resets_at - now))
 
+    def is_active_rejection(self, now: float, stale_after: int) -> bool:
+        """Whether this window is still a live 'rejected' block.
+
+        A rejection with a known reset expires at that reset; one with no
+        reset (the CLI named no reset hour) expires after ``stale_after``
+        from when it was observed, so it does not block forever.
+        """
+        if self.status != "rejected":
+            return False
+        if self.resets_at is not None:
+            return self.resets_at > now
+        return (now - self.observed_at) <= stale_after
+
     def as_dict(self, now: float, stale_after: int) -> Dict[str, Any]:
+        # A rejection that has expired (past reset, or stale with no reset)
+        # must not linger as "rejected" in /v1/usage.
+        status = self.status
+        if status == "rejected" and not self.is_active_rejection(now, stale_after):
+            status = None
         payload = {
-            "status": self.status,
+            "status": status,
             "utilization": (
                 round(self.utilization, 4) if isinstance(self.utilization, float) else None
             ),
@@ -279,9 +303,7 @@ class QuotaTracker:
             rejected = [
                 w
                 for key, w in self._windows.items()
-                if key != OVERAGE
-                and w.status == "rejected"
-                and (w.resets_at is None or w.resets_at > now)
+                if key != OVERAGE and w.is_active_rejection(now, self._stale_after)
             ]
             if not rejected:
                 return None

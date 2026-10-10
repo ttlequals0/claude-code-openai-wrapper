@@ -55,7 +55,7 @@ def get_rate_limit_for_endpoint(endpoint: str) -> str:
     """Get rate limit string for specific endpoint based on environment variables."""
     # Default rate limits
     defaults = {
-        "chat": "10/minute",
+        "chat": "120/minute",
         "debug": "2/minute",
         "auth": "10/minute",
         "session": "15/minute",

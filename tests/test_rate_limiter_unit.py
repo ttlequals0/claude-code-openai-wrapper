@@ -150,7 +150,7 @@ class TestGetRateLimitForEndpoint:
 
             importlib.reload(src.rate_limiter)
             result = src.rate_limiter.get_rate_limit_for_endpoint("chat")
-            assert result == "10/minute"
+            assert result == "120/minute"
 
     def test_debug_endpoint_default(self):
         """Debug endpoint has default rate limit."""

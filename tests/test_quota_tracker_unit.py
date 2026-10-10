@@ -224,6 +224,18 @@ class TestQuotaTrackerBlocking:
         tracker.record(_info(status="rejected", rate_limit_type="seven_day", resets_at=far))
         assert tracker.blocked_until() == far
 
+    def test_resetless_rejection_stops_blocking_after_stale_interval(self):
+        """A rejection recorded with no resets_at must not block forever."""
+        tracker = QuotaTracker(stale_after_seconds=0)
+        tracker.record(_info(status="rejected", resets_at=None))
+        time.sleep(0.01)
+        assert tracker.blocked_until() is None
+
+    def test_resetless_rejection_still_blocks_before_stale_interval(self):
+        tracker = QuotaTracker(stale_after_seconds=900)
+        tracker.record(_info(status="rejected", resets_at=None))
+        assert tracker.blocked_until() == 0
+
 
 class TestQuotaTrackerSnapshot:
     def test_empty_tracker_reports_no_windows(self):
@@ -251,6 +263,25 @@ class TestQuotaTrackerSnapshot:
         tracker.record(_info())
         time.sleep(0.01)
         assert tracker.snapshot()["windows"]["five_hour"]["stale"] is True
+
+    def test_past_reset_rejection_is_not_reported_as_rejected(self):
+        tracker = QuotaTracker()
+        tracker.record(_info(status="rejected", resets_at=int(time.time()) - 10))
+        window = tracker.snapshot()["windows"]["five_hour"]
+        assert window["status"] != "rejected"
+
+    def test_resetless_rejection_is_not_reported_as_rejected_once_stale(self):
+        tracker = QuotaTracker(stale_after_seconds=0)
+        tracker.record(_info(status="rejected", resets_at=None))
+        time.sleep(0.01)
+        window = tracker.snapshot()["windows"]["five_hour"]
+        assert window["status"] != "rejected"
+
+    def test_fresh_resetless_rejection_is_still_reported_as_rejected(self):
+        tracker = QuotaTracker(stale_after_seconds=900)
+        tracker.record(_info(status="rejected", resets_at=None))
+        window = tracker.snapshot()["windows"]["five_hour"]
+        assert window["status"] == "rejected"
 
 
 class TestQuotaTrackerProbeCadence:
@@ -373,3 +404,33 @@ class TestParseResetClockTime:
         assert parse_reset_clock_time("You've hit your session limit") is None
         assert parse_reset_clock_time("resets soon") is None
         assert parse_reset_clock_time("") is None
+
+    def test_production_reset_phrases(self):
+        """Verbatim prose observed in production rejections, 2026-10-10."""
+        from src.quota_tracker import parse_reset_clock_time
+
+        for phrase in (
+            "You've hit your session limit · resets 10:50am (UTC)",
+            "You've hit your session limit · resets 5:50am (UTC)",
+        ):
+            resets = parse_reset_clock_time(phrase, now=self.NOW)
+            assert resets is not None
+            assert resets > self.NOW
+
+    def test_non_utc_timezone_falls_back_to_none(self):
+        """Only UTC is guaranteed correct; another named zone is not parsed."""
+        from src.quota_tracker import parse_reset_clock_time
+
+        assert parse_reset_clock_time("resets 6pm (PST)", now=self.NOW) is None
+        assert parse_reset_clock_time("resets 6pm (America/New_York)", now=self.NOW) is None
+
+    def test_utc_timezone_name_is_accepted(self):
+        from src.quota_tracker import parse_reset_clock_time
+
+        resets = parse_reset_clock_time("resets 6pm (UTC)", now=self.NOW)
+        assert resets is not None
+
+    def test_garbage_text_returns_none(self):
+        from src.quota_tracker import parse_reset_clock_time
+
+        assert parse_reset_clock_time("completely unrelated error text", now=self.NOW) is None

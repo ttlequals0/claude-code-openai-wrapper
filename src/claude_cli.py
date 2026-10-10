@@ -117,22 +117,23 @@ def _quota_result_error(blob: str, num_turns: Optional[int] = None) -> ClaudeRes
 
     resets_at comes from the CLI's own prose when it names a reset hour
     ('resets 6pm (UTC)'), else from the tracker's last observed rejected
-    window. The parsed rejection is recorded so /quota and the enforcement
-    gate know about a window no RateLimitEvent reported.
+    window. Claude Code's "session limit" wording names the rolling 5-hour
+    window, so it is recorded as five_hour rather than inventing a separate
+    window type. The rejection is always recorded, even with no resets_at,
+    so /v1/usage shows it instead of staying silent.
     """
     resets_at = parse_reset_clock_time(blob) or quota_tracker.blocked_until() or None
-    if resets_at:
-        quota_tracker.record(
-            {"status": "rejected", "rate_limit_type": "session_limit", "resets_at": resets_at},
-            source="error_text",
-        )
+    quota_tracker.record(
+        {"status": "rejected", "rate_limit_type": "five_hour", "resets_at": resets_at},
+        source="error_text",
+    )
     return ClaudeResultError(
         subtype="assistant_rate_limit",
         num_turns=num_turns,
         errors=["rate_limit"],
         error_message=blob[:300] or None,
         resets_at=resets_at,
-        rate_limit_type="session_limit",
+        rate_limit_type="five_hour",
     )
 
 
@@ -483,12 +484,37 @@ class ClaudeCodeCLI:
         for message in messages:
             assistant_error = message.get("error")
             if isinstance(assistant_error, str) and assistant_error in _ASSISTANT_ERROR_VALUES:
+                resets_at = None
+                rate_limit_type = None
+                if assistant_error == "rate_limit":
+                    # No prose field here; the reset hour, if named, is in
+                    # the message's own content blocks ('resets 6pm (UTC)').
+                    # Record the rejection under five_hour even with no
+                    # reset so /v1/usage shows it rather than staying silent.
+                    content = message.get("content")
+                    blob = (
+                        " ".join(_extract_text_blocks(content)) if isinstance(content, list) else ""
+                    )
+                    resets_at = (
+                        parse_reset_clock_time(blob) or quota_tracker.blocked_until() or None
+                    )
+                    rate_limit_type = "five_hour"
+                    quota_tracker.record(
+                        {
+                            "status": "rejected",
+                            "rate_limit_type": rate_limit_type,
+                            "resets_at": resets_at,
+                        },
+                        source="error_text",
+                    )
                 raise ClaudeResultError(
                     subtype=f"assistant_{assistant_error}",
                     num_turns=None,
                     errors=[assistant_error],
                     stop_reason=message.get("stop_reason"),
                     error_message=None,
+                    resets_at=resets_at,
+                    rate_limit_type=rate_limit_type,
                 )
 
         # Rate-limit events: status 'rejected' means the upstream cut us off,

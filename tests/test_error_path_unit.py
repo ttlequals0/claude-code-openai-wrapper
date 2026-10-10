@@ -217,6 +217,26 @@ class TestHandleClaudeResultError:
         assert resp.status_code == 502
         assert _body(resp)["error"]["code"] == "something_new"
 
+    def test_rate_limit_does_not_record_to_the_circuit_breaker(self):
+        """An exhausted account quota is not a service failure; recording it
+        to the breaker would trip fail-fast on healthy traffic."""
+        from src.circuit_breaker import sdk_circuit_breaker
+
+        before = sdk_circuit_breaker.snapshot()["window_size"]
+        err = ClaudeResultError(subtype="assistant_rate_limit", errors=["rate_limit"])
+        _handle_claude_result_error("req-rl-cb", "claude-sonnet-4-6", err)
+        after = sdk_circuit_breaker.snapshot()["window_size"]
+        assert after == before
+
+    def test_real_failure_still_records_to_the_circuit_breaker(self):
+        from src.circuit_breaker import sdk_circuit_breaker
+
+        before = sdk_circuit_breaker.snapshot()["window_size"]
+        err = ClaudeResultError(subtype="error_during_execution", error_message="boom")
+        _handle_claude_result_error("req-real-cb", "claude-opus-4-6", err)
+        after = sdk_circuit_breaker.snapshot()["window_size"]
+        assert after == before + 1
+
 
 class TestAssistantErrorTaxonomy:
     """AssistantMessage.error literals map to proper HTTP status codes."""
@@ -276,6 +296,62 @@ class TestParseClaudeMessageAssistantError:
             cli.parse_claude_message(messages)
         assert excinfo.value.subtype == "assistant_rate_limit"
         assert "rate_limit" in excinfo.value.errors
+
+    def test_assistant_rate_limit_parses_reset_from_content_and_records_it(self):
+        """The literal error='rate_limit' path previously raised with
+        resets_at=None and never recorded the rejection, so /v1/usage never
+        learned about it. The reset hour lives in the content text blocks."""
+        from unittest.mock import MagicMock, patch
+
+        from src.claude_cli import ClaudeCodeCLI
+        from src.quota_tracker import QuotaTracker
+
+        cli = MagicMock()
+        cli.parse_claude_message = ClaudeCodeCLI.parse_claude_message.__get__(cli, ClaudeCodeCLI)
+        messages = [
+            {
+                "content": [
+                    {"type": "text", "text": "You've hit your session limit · resets 6pm (UTC)"}
+                ],
+                "model": "claude-sonnet-4-6",
+                "error": "rate_limit",
+            }
+        ]
+        fresh = QuotaTracker()
+        with patch("src.claude_cli.quota_tracker", fresh):
+            with pytest.raises(ClaudeResultError) as excinfo:
+                cli.parse_claude_message(messages)
+        assert excinfo.value.resets_at is not None
+        assert excinfo.value.rate_limit_type == "five_hour"
+        window = fresh.snapshot()["windows"]["five_hour"]
+        assert window["status"] == "rejected"
+        assert window["resets_at"] == excinfo.value.resets_at
+
+    def test_assistant_rate_limit_with_no_parseable_reset_still_records_rejection(self):
+        """No reset found: still record the rejection with resets_at=None so
+        /v1/usage shows it rather than staying silent."""
+        from unittest.mock import MagicMock, patch
+
+        from src.claude_cli import ClaudeCodeCLI
+        from src.quota_tracker import QuotaTracker
+
+        cli = MagicMock()
+        cli.parse_claude_message = ClaudeCodeCLI.parse_claude_message.__get__(cli, ClaudeCodeCLI)
+        messages = [
+            {
+                "content": [{"type": "text", "text": "upstream rate limited this request"}],
+                "model": "claude-sonnet-4-6",
+                "error": "rate_limit",
+            }
+        ]
+        fresh = QuotaTracker()
+        with patch("src.claude_cli.quota_tracker", fresh):
+            with pytest.raises(ClaudeResultError) as excinfo:
+                cli.parse_claude_message(messages)
+        assert excinfo.value.resets_at is None
+        window = fresh.snapshot()["windows"]["five_hour"]
+        assert window["status"] == "rejected"
+        assert window["resets_at"] is None
 
 
 class TestParseClaudeMessageRateLimitEvent:

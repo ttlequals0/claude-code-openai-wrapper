@@ -933,6 +933,31 @@ class TestQuotaErrorClassification:
         assert err.resets_at is not None
         assert fresh.blocked_until() == err.resets_at
 
+    def test_quota_error_records_under_five_hour_window(self):
+        """Claude Code's 'session limit' prose names the rolling 5-hour
+        window; it must not invent a separate session_limit window type."""
+        from src.claude_cli import _quota_result_error
+        from src.quota_tracker import QuotaTracker
+
+        fresh = QuotaTracker()
+        with patch("src.claude_cli.quota_tracker", fresh):
+            err = _quota_result_error("hit your session limit; resets 6pm (UTC)")
+        assert err.rate_limit_type == "five_hour"
+        window = fresh.snapshot()["windows"]["five_hour"]
+        assert window["status"] == "rejected"
+
+    def test_quota_error_with_no_reset_still_records_rejection(self):
+        from src.claude_cli import _quota_result_error
+        from src.quota_tracker import QuotaTracker
+
+        fresh = QuotaTracker()
+        with patch("src.claude_cli.quota_tracker", fresh):
+            err = _quota_result_error("hit your session limit, no reset named")
+        assert err.resets_at is None
+        window = fresh.snapshot()["windows"]["five_hour"]
+        assert window["status"] == "rejected"
+        assert window["resets_at"] is None
+
 
 class TestRunCompletionQuotaFailFast:
     """A quota rejection must not be retried inline (observed: 10x60s per

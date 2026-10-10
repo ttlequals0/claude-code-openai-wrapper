@@ -4,10 +4,11 @@ OpenAI API-compatible wrapper for Claude Code. Drop it in front of any OpenAI cl
 
 ## Version
 
-**Current:** 2.13.0
+**Current:** 2.13.1
 
 Highlights of recent releases (full history in [CHANGELOG.md](./CHANGELOG.md)):
 
+- **2.13.1** - An exhausted account quota reports as such instead of hiding behind `/v1/usage`'s `blocked=false`: the "session limit" rejection the CLI's literal `error='rate_limit'` path raised was never recorded, and a rejection with no parseable reset read as blocked forever rather than expiring. The reset hour is now parsed off both raise paths and recorded under the `five_hour` window (not an invented `session_limit` type); a reset-less rejection expires after `WRAPPER_QUOTA_STALE_AFTER_SECONDS`, and a past reset stops reading as rejected. An account rate limit no longer counts against the circuit breaker. `RATE_LIMIT_CHAT_PER_MINUTE` default raised from 10 to 120, since the old default rejected normal traffic via slowapi before the account's own limit ever came into play. `UVICORN_WORKERS` default lowered from 2 to 1, since the quota tracker and breaker are in-process state that a second worker would split.
 - **2.13.0** - Added `claude-sonnet-5-5` (Sonnet 5.5, $2/$10 MTok) and `claude-haiku-5-5` (Haiku 5.5, $0.10/$0.50 MTok under 100K tokens, 5x over), both 1M context / 128K max output. `FAST_MODEL` default moves to `claude-haiku-5-5`; `claude-opus-5-5` overload fallback and `DEFAULT_MODEL_FALLBACK` both move to `claude-sonnet-5-5`. Dropped `claude-opus-4-1-20250805`, `claude-sonnet-4-20250514`, and `claude-opus-4-20250514`, which the Anthropic Models API no longer serves.
 - **2.12.1** - Updated `claude-agent-sdk` to 0.2.162, which bundles Claude Code 2.1.285 and supports `claude-opus-5-5`.
 - **2.12.0** - Added `claude-opus-5-5` (Opus 5.5, $4/$20 MTok) and `claude-fable-5-1` (Fable 5.1, $10/$50 MTok), both 1M context / 128K max output. Sonnet 5 cost tracking moved to $2/$10 MTok, now its standard price. `claude-agent-sdk` 0.2.152 to 0.2.157. Dropped the unused dev-only `safety` package, which takes `nltk` (CVE-2026-81726, Dependabot #35) out of the lock file entirely.
@@ -108,7 +109,7 @@ Per-IP rate limiting is on by default. Per-endpoint defaults and the env vars th
 
 | Endpoint group | Default | Env var |
 |----------------|---------|---------|
-| `/v1/chat/completions`, `/v1/messages` | 10/min | `RATE_LIMIT_CHAT_PER_MINUTE` |
+| `/v1/chat/completions`, `/v1/messages` | 120/min | `RATE_LIMIT_CHAT_PER_MINUTE` |
 | `/v1/debug/request` | 2/min | `RATE_LIMIT_DEBUG_PER_MINUTE` |
 | `/v1/auth/status` | 10/min | `RATE_LIMIT_AUTH_PER_MINUTE` |
 | `/v1/sessions/*` | 15/min | `RATE_LIMIT_SESSION_PER_MINUTE` |
@@ -142,7 +143,7 @@ docker run -d -p 8000:8000 \
 docker run -d -p 8000:8000 \
   -v ~/.claude:/root/.claude \
   --name claude-wrapper \
-  ttlequals0/claude-code-openai-wrapper:2.13.0
+  ttlequals0/claude-code-openai-wrapper:2.13.1
 
 # Or build locally (prod stage is the default target)
 docker build --platform linux/amd64 -t claude-wrapper:local .
@@ -224,7 +225,7 @@ Listed in roughly the order you will reach for them.
 | `WRAPPER_MAP_MAX_TOKENS_TO_THINKING` | Map OpenAI `max_tokens` to Claude `max_thinking_tokens` (legacy) | `false` |
 | `WATCHDOG_ENABLED` | Enable CPU watchdog (for Docker) | `false` |
 | `WATCHDOG_CPU_THRESHOLD` / `WATCHDOG_INTERVAL` / `WATCHDOG_STRIKES` | Watchdog tuning | see `src/cpu_watchdog.py` |
-| `UVICORN_WORKERS` | Worker count for the prod image | `2` |
+| `UVICORN_WORKERS` | Worker count for the prod image. Default 1: the quota tracker and circuit breaker are in-process state, split across workers above 1. Request handling is async around the SDK subprocess, so one worker still serves concurrent requests. | `1` |
 | `RATE_LIMIT_ENABLED` / `RATE_LIMIT_*_PER_MINUTE` | See rate-limit section above | - |
 
 ## Usage Examples
@@ -535,6 +536,11 @@ reports one status per event, and inferring a status for the others from their
 utilization would be making it up. `source` is `passive` for a reading from
 live traffic and `probe` for one from a refresh probe. `stale` marks a reading
 older than `WRAPPER_QUOTA_STALE_AFTER_SECONDS`.
+
+A `rejected` window stops reporting as rejected once it is no longer live: a
+known reset time that has passed, or, when the CLI named no reset hour, after
+`WRAPPER_QUOTA_STALE_AFTER_SECONDS` since it was observed. Otherwise a single
+reset-less rejection would read as blocked forever.
 
 A `rejected` overage pool usually means pay-as-you-go is switched off rather
 than exhausted; check `disabled_reason` (for example `org_level_disabled`)
