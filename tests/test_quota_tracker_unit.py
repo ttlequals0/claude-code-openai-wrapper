@@ -76,6 +76,45 @@ class TestQuotaTrackerRecord:
         assert tracker.snapshot()["windows"]["five_hour"]["source"] == "probe"
 
 
+class TestQuotaTrackerErrorTextRecording:
+    """record(source="error_text") synthesises a rejection from CLI prose,
+    with no unifiedWindows payload behind it, so it must not wipe out
+    utilization the tracker already knew from live traffic, and must not
+    leave a stale window claiming representative alongside the new one."""
+
+    def test_carries_over_previous_utilization(self):
+        tracker = QuotaTracker()
+        tracker.record(_info(rate_limit_type="five_hour", utilization=0.42))
+        tracker.record(
+            {"status": "rejected", "rate_limit_type": "five_hour", "resets_at": None},
+            source="error_text",
+        )
+        assert tracker.snapshot()["windows"]["five_hour"]["utilization"] == 0.42
+
+    def test_does_not_carry_over_utilization_for_a_different_source(self):
+        """Only the error-text path lacks a payload to read utilization
+        from; a normal event reporting null utilization is not papered over."""
+        tracker = QuotaTracker()
+        tracker.record(_info(rate_limit_type="five_hour", utilization=0.42))
+        tracker.record(
+            {"status": "allowed", "rate_limit_type": "five_hour", "utilization": None},
+            source="passive",
+        )
+        assert tracker.snapshot()["windows"]["five_hour"]["utilization"] is None
+
+    def test_clears_representative_on_other_windows(self):
+        tracker = QuotaTracker()
+        tracker.record(_info(rate_limit_type="seven_day", utilization=0.05))
+        tracker.record(
+            {"status": "rejected", "rate_limit_type": "five_hour", "resets_at": None},
+            source="error_text",
+        )
+        windows = tracker.snapshot()["windows"]
+        assert windows["seven_day"]["representative"] is False
+        assert windows["five_hour"]["representative"] is True
+        assert tracker.snapshot()["binding_window"] == "five_hour"
+
+
 class TestQuotaTrackerUnifiedWindows:
     """The SDK models only the representative window, but the CLI sends every
     window under raw["unifiedWindows"], and that is the only place utilization
@@ -434,3 +473,31 @@ class TestParseResetClockTime:
         from src.quota_tracker import parse_reset_clock_time
 
         assert parse_reset_clock_time("completely unrelated error text", now=self.NOW) is None
+
+    def test_reset_within_the_last_minute_stays_today(self):
+        """The CLI's own clock and ours can be a few seconds apart; a reset
+        named for a moment just in the past is still today's, not tomorrow's."""
+        from datetime import datetime, timezone
+
+        from src.quota_tracker import parse_reset_clock_time
+
+        now_ts = datetime(2026, 1, 1, 10, 50, 20, tzinfo=timezone.utc).timestamp()
+        expected = datetime(2026, 1, 1, 10, 50, 0, tzinfo=timezone.utc).timestamp()
+        resets = parse_reset_clock_time("resets 10:50am (UTC)", now=now_ts)
+        assert resets == int(expected)
+
+    def test_reset_more_than_a_minute_past_rolls_to_tomorrow(self):
+        from datetime import datetime, timezone
+
+        from src.quota_tracker import parse_reset_clock_time
+
+        now_ts = datetime(2026, 1, 1, 10, 51, 1, tzinfo=timezone.utc).timestamp()
+        expected = datetime(2026, 1, 2, 10, 50, 0, tzinfo=timezone.utc).timestamp()
+        resets = parse_reset_clock_time("resets 10:50am (UTC)", now=now_ts)
+        assert resets == int(expected)
+
+    def test_gmt_and_etc_utc_are_trusted(self):
+        from src.quota_tracker import parse_reset_clock_time
+
+        assert parse_reset_clock_time("resets 6pm (GMT)", now=self.NOW) is not None
+        assert parse_reset_clock_time("resets 6pm (Etc/UTC)", now=self.NOW) is not None

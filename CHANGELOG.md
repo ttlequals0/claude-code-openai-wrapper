@@ -11,20 +11,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An exhausted account quota was reaching callers as a plain 429 while
   `/v1/usage` kept reporting `blocked=false`: the CLI's literal
-  `error_literal` rate-limit path (no prose, just `error='rate_limit'`) never
-  parsed a reset time or recorded the rejection, so the tracker never learned
-  about it. The reset hour named in the message's own content ("resets 6pm
-  (UTC)") is now parsed and recorded there too, the same as the other
-  rejection path.
+  `error='rate_limit'` path (no prose) never parsed a reset time or recorded
+  the rejection, so the tracker never learned about it. The reset hour named
+  in the message's own content ("resets 6pm (UTC)") is now parsed and
+  recorded there too, the same as the other rejection path.
 - A rejection recorded with no reset time read as blocked forever in
   `/v1/usage` and the enforcement gate. It now expires after
   `WRAPPER_QUOTA_STALE_AFTER_SECONDS` from when it was observed. A rejection
   whose reset time has already passed also stops reporting as `rejected`
-  rather than lingering until a newer event overwrites it.
+  rather than lingering until a newer event overwrites it; this applies to
+  the representative window too, so an expired rejection there now reports
+  `status: null` instead of a stale `rejected`.
 - The reset-hour parser accepted any parenthesised timezone name as if it
-  were UTC, misreading non-UTC hours. It now only trusts an explicit `(UTC)`
-  suffix (or none, the CLI's normal shape); any other named zone falls back
-  to no reset rather than a wrong one.
+  were UTC, misreading non-UTC hours. It now only trusts `(UTC)`, `(GMT)`,
+  `(Etc/UTC)`, or no timezone at all (the CLI's normal shape); any other
+  named zone falls back to no reset rather than a wrong one. It also rolled
+  to tomorrow for a reset named only a few seconds in the past (clock skew
+  between the CLI and the wrapper); that now only rolls over past a minute.
+- A rejection with no parsed reset time was recorded under `five_hour`
+  regardless of what the text said, so a bare 429 or a generic "rate limit"
+  mention could mark the window rejected on a guess. That now requires the
+  text to name an account limit specifically ("session limit", "usage
+  limit", "weekly limit", "limit reached").
+- Recording a rejection from error-text prose wiped the window's last known
+  utilization to null and could leave two windows flagged `representative`
+  at once (the new rejection and a stale one from an earlier event), making
+  `binding_window` ambiguous. It now carries the previous utilization
+  forward and clears `representative` on every other window.
 - An exhausted account quota (`assistant_rate_limit`) counted as a circuit
   breaker failure, so a burst of rejections during a real quota exhaustion
   could trip the breaker and fail-fast unrelated healthy traffic. Account

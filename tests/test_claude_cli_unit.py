@@ -958,6 +958,29 @@ class TestQuotaErrorClassification:
         assert window["status"] == "rejected"
         assert window["resets_at"] is None
 
+    def test_weekly_limit_wording_with_no_reset_still_records(self):
+        from src.claude_cli import _quota_result_error
+        from src.quota_tracker import QuotaTracker
+
+        fresh = QuotaTracker()
+        with patch("src.claude_cli.quota_tracker", fresh):
+            err = _quota_result_error("you've hit your weekly limit, no reset named")
+        assert err.resets_at is None
+        window = fresh.snapshot()["windows"]["five_hour"]
+        assert window["status"] == "rejected"
+
+    def test_generic_rate_limit_text_with_no_reset_is_not_recorded(self):
+        """A bare 'rate limit' mention or 429 with no parsed reset and no
+        account-limit wording must not mark five_hour rejected on a guess."""
+        from src.claude_cli import _quota_result_error
+        from src.quota_tracker import QuotaTracker
+
+        fresh = QuotaTracker()
+        with patch("src.claude_cli.quota_tracker", fresh):
+            err = _quota_result_error("upstream rate limit, no reset named")
+        assert err.resets_at is None
+        assert fresh.snapshot()["observed_windows"] == 0
+
 
 class TestRunCompletionQuotaFailFast:
     """A quota rejection must not be retried inline (observed: 10x60s per

@@ -327,9 +327,35 @@ class TestParseClaudeMessageAssistantError:
         assert window["status"] == "rejected"
         assert window["resets_at"] == excinfo.value.resets_at
 
-    def test_assistant_rate_limit_with_no_parseable_reset_still_records_rejection(self):
-        """No reset found: still record the rejection with resets_at=None so
-        /v1/usage shows it rather than staying silent."""
+    def test_assistant_rate_limit_with_account_limit_wording_and_no_reset_still_records(self):
+        """No reset found, but the content names an account limit: still
+        record the rejection with resets_at=None so /v1/usage shows it."""
+        from unittest.mock import MagicMock, patch
+
+        from src.claude_cli import ClaudeCodeCLI
+        from src.quota_tracker import QuotaTracker
+
+        cli = MagicMock()
+        cli.parse_claude_message = ClaudeCodeCLI.parse_claude_message.__get__(cli, ClaudeCodeCLI)
+        messages = [
+            {
+                "content": [{"type": "text", "text": "You've hit your usage limit for now"}],
+                "model": "claude-sonnet-4-6",
+                "error": "rate_limit",
+            }
+        ]
+        fresh = QuotaTracker()
+        with patch("src.claude_cli.quota_tracker", fresh):
+            with pytest.raises(ClaudeResultError) as excinfo:
+                cli.parse_claude_message(messages)
+        assert excinfo.value.resets_at is None
+        window = fresh.snapshot()["windows"]["five_hour"]
+        assert window["status"] == "rejected"
+        assert window["resets_at"] is None
+
+    def test_assistant_rate_limit_with_generic_text_and_no_reset_is_not_recorded(self):
+        """A bare 429 or generic 'rate limited' text with no parsed reset and
+        no account-limit wording must not mark five_hour rejected on a guess."""
         from unittest.mock import MagicMock, patch
 
         from src.claude_cli import ClaudeCodeCLI
@@ -349,9 +375,7 @@ class TestParseClaudeMessageAssistantError:
             with pytest.raises(ClaudeResultError) as excinfo:
                 cli.parse_claude_message(messages)
         assert excinfo.value.resets_at is None
-        window = fresh.snapshot()["windows"]["five_hour"]
-        assert window["status"] == "rejected"
-        assert window["resets_at"] is None
+        assert fresh.snapshot()["observed_windows"] == 0
 
 
 class TestParseClaudeMessageRateLimitEvent:

@@ -50,7 +50,7 @@ services:
       # - DEBUG_MODE=true
       # Optional: Rate limiting configuration
       # - RATE_LIMIT_ENABLED=true
-      # - RATE_LIMIT_CHAT_PER_MINUTE=10
+      # - RATE_LIMIT_CHAT_PER_MINUTE=120
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

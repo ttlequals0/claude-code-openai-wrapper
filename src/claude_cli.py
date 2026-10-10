@@ -9,7 +9,12 @@ import logging
 
 from claude_agent_sdk import query, ClaudeAgentOptions, RateLimitEvent
 
-from src.quota_tracker import is_quota_error_text, parse_reset_clock_time, quota_tracker
+from src.quota_tracker import (
+    is_account_limit_text,
+    is_quota_error_text,
+    parse_reset_clock_time,
+    quota_tracker,
+)
 from src.retry import RetryState, retry_delay
 
 logger = logging.getLogger(__name__)
@@ -119,14 +124,17 @@ def _quota_result_error(blob: str, num_turns: Optional[int] = None) -> ClaudeRes
     ('resets 6pm (UTC)'), else from the tracker's last observed rejected
     window. Claude Code's "session limit" wording names the rolling 5-hour
     window, so it is recorded as five_hour rather than inventing a separate
-    window type. The rejection is always recorded, even with no resets_at,
-    so /v1/usage shows it instead of staying silent.
+    window type. With no parsed reset, the rejection is still recorded, but
+    only when the prose names an account limit specifically; a bare 429 or
+    generic 'rate limit' text is not reason enough to mark the window
+    rejected on a guess.
     """
     resets_at = parse_reset_clock_time(blob) or quota_tracker.blocked_until() or None
-    quota_tracker.record(
-        {"status": "rejected", "rate_limit_type": "five_hour", "resets_at": resets_at},
-        source="error_text",
-    )
+    if resets_at is not None or is_account_limit_text(blob):
+        quota_tracker.record(
+            {"status": "rejected", "rate_limit_type": "five_hour", "resets_at": resets_at},
+            source="error_text",
+        )
     return ClaudeResultError(
         subtype="assistant_rate_limit",
         num_turns=num_turns,
@@ -489,8 +497,10 @@ class ClaudeCodeCLI:
                 if assistant_error == "rate_limit":
                     # No prose field here; the reset hour, if named, is in
                     # the message's own content blocks ('resets 6pm (UTC)').
-                    # Record the rejection under five_hour even with no
-                    # reset so /v1/usage shows it rather than staying silent.
+                    # With no parsed reset, only record when the content
+                    # names an account limit specifically; a bare 429 or
+                    # generic 'rate limit' text is not reason enough to mark
+                    # the window rejected on a guess.
                     content = message.get("content")
                     blob = (
                         " ".join(_extract_text_blocks(content)) if isinstance(content, list) else ""
@@ -499,14 +509,15 @@ class ClaudeCodeCLI:
                         parse_reset_clock_time(blob) or quota_tracker.blocked_until() or None
                     )
                     rate_limit_type = "five_hour"
-                    quota_tracker.record(
-                        {
-                            "status": "rejected",
-                            "rate_limit_type": rate_limit_type,
-                            "resets_at": resets_at,
-                        },
-                        source="error_text",
-                    )
+                    if resets_at is not None or is_account_limit_text(blob):
+                        quota_tracker.record(
+                            {
+                                "status": "rejected",
+                                "rate_limit_type": rate_limit_type,
+                                "resets_at": resets_at,
+                            },
+                            source="error_text",
+                        )
                 raise ClaudeResultError(
                     subtype=f"assistant_{assistant_error}",
                     num_turns=None,
