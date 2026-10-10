@@ -2,37 +2,19 @@
 
 OpenAI API-compatible wrapper for Claude Code. Drop it in front of any OpenAI client library and talk to Claude instead.
 
-## Version
+## Features
 
-**Current:** 2.13.1
+- **Two API shapes.** OpenAI `/v1/chat/completions` and Anthropic `/v1/messages`, both with streaming.
+- **JSON mode and function calling.** `response_format` with `json_object` or `json_schema`, plus `tools` and `tool_choice` simulated on top of Claude Code.
+- **Sessions.** Pass a `session_id` to keep a conversation going; list and delete them under `/v1/sessions`.
+- **Live model list.** `/v1/models` reads Anthropic's catalogue when an API key is set and falls back to a built-in list otherwise.
+- **Quota reporting.** `/v1/usage` reports each Claude subscription window with its utilization and reset time. A 429 carries a `Retry-After` set to the real reset.
+- **Retry, fallback and a circuit breaker.** Overloaded Opus requests fall back to Sonnet. Repeated upstream failures open a short-lived breaker instead of piling up.
+- **Cost tracking and per-request controls.** Usage is priced per model, and `X-Claude-*` headers set effort, thinking, turns, tools and permission mode.
+- **Auth options.** Claude CLI login, Anthropic API key, Bedrock or Vertex AI. Optional API key on the wrapper itself.
+- **Tools are off by default** for speed. Send `enable_tools: true` to turn them on.
 
-Highlights of recent releases (full history in [CHANGELOG.md](./CHANGELOG.md)):
-
-- **2.13.1** - An exhausted account quota reports as such instead of hiding behind `/v1/usage`'s `blocked=false`: the "session limit" rejection the CLI's literal `error='rate_limit'` path raised was never recorded, and a rejection with no parseable reset read as blocked forever rather than expiring. The reset hour is now parsed off both raise paths and recorded under the `five_hour` window (not an invented `session_limit` type); a reset-less rejection expires after `WRAPPER_QUOTA_STALE_AFTER_SECONDS`, and a past reset stops reading as rejected. An account rate limit no longer counts against the circuit breaker. `RATE_LIMIT_CHAT_PER_MINUTE` default raised from 10 to 120, since the old default rejected normal traffic via slowapi before the account's own limit ever came into play. `UVICORN_WORKERS` default lowered from 2 to 1, since the quota tracker and breaker are in-process state that a second worker would split.
-- **2.13.0** - Added `claude-sonnet-5-5` (Sonnet 5.5, $2/$10 MTok) and `claude-haiku-5-5` (Haiku 5.5, $0.10/$0.50 MTok under 100K tokens, 5x over), both 1M context / 128K max output. `FAST_MODEL` default moves to `claude-haiku-5-5`; `claude-opus-5-5` overload fallback and `DEFAULT_MODEL_FALLBACK` both move to `claude-sonnet-5-5`. Dropped `claude-opus-4-1-20250805`, `claude-sonnet-4-20250514`, and `claude-opus-4-20250514`, which the Anthropic Models API no longer serves.
-- **2.12.1** - Updated `claude-agent-sdk` to 0.2.162, which bundles Claude Code 2.1.285 and supports `claude-opus-5-5`.
-- **2.12.0** - Added `claude-opus-5-5` (Opus 5.5, $4/$20 MTok) and `claude-fable-5-1` (Fable 5.1, $10/$50 MTok), both 1M context / 128K max output. Sonnet 5 cost tracking moved to $2/$10 MTok, now its standard price. `claude-agent-sdk` 0.2.152 to 0.2.157. Dropped the unused dev-only `safety` package, which takes `nltk` (CVE-2026-81726, Dependabot #35) out of the lock file entirely.
-- **2.11.0** - `claude-agent-sdk` 0.2.148 to 0.2.152. Drop the runtime `nltk` pin (dev-only via `safety`) so it no longer ships in the production image; CVE-2026-81726 has no upstream fix.
-- **2.10.3** - Security: `anyio` >=4.14.2 (locked 4.15.1) closes GHSA-82r6-8w77-94w6 (TLSStream IDNA 2003 host encoding enabling TLS certificate spoofing, critical) and GHSA-5p39-cfhj-2xmp (process-pool workers block on undrained stderr, medium).
-- **2.10.1** - `/v1/usage` was missing the `seven_day` window and reported a null `utilization` everywhere. The SDK models only the representative window, but the CLI sends every window under `raw.unifiedWindows`, which is the only place utilization appears. Since the 2026-08-30 outage ran far longer than a five-hour window can explain, the weekly cap is the likely cause and `seven_day` was exactly what was not being reported. Adds `closest_to_limit` and `binding_window`, and surfaces `disabled_reason` on the overage pool.
-- **2.10.0** - Fixed a 13.5-hour outage on 2026-08-30 where a subscription usage limit was reported to every caller as HTTP 401 `authentication_error`. Only a genuine auth failure returns 401 now. New `GET /v1/usage` reports quota per rate-limit window, read from the SDK's `RateLimitEvent` instead of a proxy. `Retry-After` comes from the upstream reset rather than a hardcoded 30s, `/v1/messages` stops collapsing a rate limit to 502, and `WRAPPER_QUOTA_ENFORCEMENT_ENABLED` adds opt-in 429 blocking. `claude-agent-sdk` 0.2.128 -> 0.2.148, `cryptography` floor >=50.0.0 (Dependabot #29). pip removed from the runtime image, clearing the last two language-package trivy findings.
-- **2.9.14** - JSON mode relocates the caller's system prompt into the user turn, because the Agent SDK treats `options.system_prompt` as a persona rather than binding instructions. Multiple system messages are joined instead of collapsing to the last one. `claude-agent-sdk` 0.2.127 -> 0.2.128.
-- **2.9.12** - Added `claude-opus-5` (Opus 5, $5/$25 MTok, 1M context / 128K max output) to the model catalogue. `claude-agent-sdk` 0.2.110 -> 0.2.127. Security floors raised: `mcp` >=1.28.1 (closes three high alerts #26-28) and `nltk` >=3.10.0 (closes #24, previously accepted risk - fix now shipped). Deep health probe no longer returns exception messages to clients (CodeQL py/stack-trace-exposure).
-- **2.9.11** - Added `claude-sonnet-5` (new balanced flagship, $3/$15 MTok, 1M context / 128K max output) and `claude-fable-5` (Anthropic's most capable widely released model, $10/$50 MTok) to the model catalogue; `DEFAULT_MODEL_FALLBACK` moved to `claude-sonnet-5`. `claude-agent-sdk` 0.2.93 -> 0.2.110. Security floors raised to close 11 Dependabot alerts: `cryptography` >=48.0.1 (#23), `pyjwt` >=2.13.0 (#14-18), `python-multipart` >=0.0.31 (#19-22), new `joserfc` >=1.6.7 (#25). The nltk alert (#24) has no upstream fix yet and is documented as accepted risk.
-- **2.9.10** - `claude-agent-sdk` 0.2.87 -> 0.2.93. Raised the `starlette` floor to `>=1.0.1` (resolves to 1.3.1) to close `GHSA-86qp-5c8j-p5mr` (Host-header path poisoning, Dependabot #13), which required raising the `fastapi` floor to `>=0.133.1` (resolves to 0.137.0) since fastapi `<=0.132.x` caps starlette below 1.0.
-- **2.9.9** - Added `claude-opus-4-8` (new Opus flagship) to the static model catalogue alongside `claude-opus-4-7`; both carry the 1M context / 128K max output / Opus pricing tier / `claude-sonnet-4-6` overload fallback. Matches the current Anthropic `/v1/models` response. `claude-agent-sdk` already at the latest published `0.2.87`; no SDK bump.
-- **2.9.8** - `idna` 3.10 -> 3.15 to close CVE-2026-45409. `claude-agent-sdk` 0.2.82 -> 0.2.87.
-- **2.9.7** - Active Claude-CLI auth health probe (10-minute default, configurable via `CLI_AUTH_PROBE_INTERVAL_SECONDS`). `/v1/chat/completions` and `/v1/messages` now return **HTTP 401** with `error.type=authentication_error` when the bundled CLI loses its session, so OpenAI / Anthropic client libraries route the failure as `AuthenticationError` instead of a transient 502/503. `/v1/auth/status` exposes the new `cli_health` block. Defense-in-depth: `error_during_execution` results whose stderr matches `Not logged in / Please run /login / Invalid API key` also map to 401 and seed `cli_health` failed.
-- **2.9.6** - `claude-agent-sdk` 0.1.68 -> 0.1.81. urllib3 floor raised to 2.7.0 and `python-multipart` to 0.0.27 to close three HIGH Dependabot alerts. Pulled in upstream `RichardAtCT#46` so `/v1/models` returns Anthropic's live catalogue when `ANTHROPIC_API_KEY` is set (cached, with a short error TTL so transient outages do not stick for an hour). `check-sdk-version.yml` now opens a draft bump PR on drift instead of writing only to the job summary.
-- **2.9.x** (earlier) - CodeQL hardening: sanitised error responses (no more `str(e)` to clients), `filter_content` rewrite against polynomial ReDoS, `/v1/debug/request` gated behind `DEBUG_MODE`/`VERBOSE`, workflow permissions pinned. Image trimmed via `poetry install --only main` and a real `.dockerignore`.
-- **2.8.x** - Security dep bumps, breaker defaults loosened, CLI stderr capture, structured-log state unmasked.
-- **2.7.0** - Added `claude-opus-4-7`; retired `claude-3-*` family; corrected context-window and max-output metadata.
-- **2.6.0** - OpenAI function calling simulation (`tools` / `tool_choice`), JSON schema support in `response_format`, real-time streaming fence stripping, CPU watchdog.
-- **2.5.x** - Landing-page redesign, model catalogue from the open-sourced Claude Code source, 41 tools tracked, retry + model fallback, cost tracking, `X-Claude-Effort` / `X-Claude-Thinking` headers.
-
-## Status
-
-Production ready. Streaming, sessions, JSON mode, and function calling are supported. Tools are off by default for speed - pass `enable_tools: true` to turn them on. Auth supports API key, Bedrock, Vertex AI, and CLI.
+Release notes live in [CHANGELOG.md](./CHANGELOG.md) and on the GitHub releases page.
 
 ## Quick Start
 

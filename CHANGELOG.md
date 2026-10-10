@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- README: the per-version highlights list is replaced by a short Features section; release history stays in this file and on the GitHub releases page.
 - The session-limit rejection (Claude Code's rolling-window wording) is
   recorded under the `five_hour` quota window instead of inventing a
   separate `session_limit` window type, since that is the window it names.
