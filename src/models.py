@@ -39,10 +39,13 @@ def _map_max_tokens_to_thinking() -> bool:
 
 
 class ContentPart(BaseModel):
-    """Content part for multimodal messages (OpenAI format)."""
+    """One content part; non-text parts from agentic clients are accepted and skipped."""
 
-    type: Literal["text"]
-    text: str
+    type: str
+    text: Optional[str] = None
+    content: Optional[Any] = None
+
+    model_config = {"extra": "ignore"}
 
 
 class FunctionCall(BaseModel):
@@ -81,10 +84,16 @@ class Message(BaseModel):
             # Extract text from content parts and concatenate
             text_parts = []
             for part in self.content:
-                if isinstance(part, ContentPart) and part.type == "text":
+                if part.type == "text" and part.text:
                     text_parts.append(part.text)
-                elif isinstance(part, dict) and part.get("type") == "text":
-                    text_parts.append(part.get("text", ""))
+                elif part.type == "tool_result":
+                    inner = part.content
+                    if isinstance(inner, str):
+                        text_parts.append(inner)
+                    elif isinstance(inner, list):
+                        for block in inner:
+                            if isinstance(block, dict) and isinstance(block.get("text"), str):
+                                text_parts.append(block["text"])
 
             # Join all text parts with newlines
             self.content = "\n".join(text_parts) if text_parts else ""
