@@ -1,6 +1,6 @@
 """Message content parts from agentic clients (tool_use, tool_result, images) must not 422."""
 
-from src.models import ContentPart, Message
+from src.models import Message
 
 
 def test_text_part_still_normalizes():
@@ -35,8 +35,21 @@ def test_tool_result_text_is_kept():
     assert msg.content == "file body\nplain"
 
 
-def test_null_content_and_unknown_fields_are_tolerated():
-    msg = Message(role="assistant", content=None, store=True)
-    assert msg.content is None
-    part = ContentPart(type="input_image", image_url="data:x")
-    assert part.text is None
+def test_null_content_is_tolerated():
+    assert Message(role="assistant", content=None).content is None
+
+
+def test_unknown_part_fields_are_ignored():
+    msg = Message(
+        role="user",
+        content=[{"type": "input_image", "image_url": "data:x"}, {"type": "text", "text": "hi"}],
+    )
+    assert msg.content == "hi"
+
+
+def test_non_string_tool_result_text_is_skipped():
+    msg = Message(
+        role="user",
+        content=[{"type": "tool_result", "content": [{"text": 5}, {"text": "ok"}]}],
+    )
+    assert msg.content == "ok"

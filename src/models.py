@@ -39,11 +39,7 @@ def _map_max_tokens_to_thinking() -> bool:
 
 
 class ContentPart(BaseModel):
-    """Content part for multimodal messages (OpenAI format).
-
-    Agentic clients also send tool_use, tool_result and image parts; those
-    are accepted and the text normalizer keeps what it can read.
-    """
+    """One content part; non-text parts from agentic clients are accepted and skipped."""
 
     type: str
     text: Optional[str] = None
@@ -88,18 +84,15 @@ class Message(BaseModel):
             # Extract text from content parts and concatenate
             text_parts = []
             for part in self.content:
-                if isinstance(part, dict):
-                    part = ContentPart.model_validate(part)
                 if part.type == "text" and part.text:
                     text_parts.append(part.text)
                 elif part.type == "tool_result":
-                    # A tool result carries a string or a list of text blocks.
                     inner = part.content
                     if isinstance(inner, str):
                         text_parts.append(inner)
                     elif isinstance(inner, list):
                         for block in inner:
-                            if isinstance(block, dict) and block.get("text"):
+                            if isinstance(block, dict) and isinstance(block.get("text"), str):
                                 text_parts.append(block["text"])
 
             # Join all text parts with newlines
