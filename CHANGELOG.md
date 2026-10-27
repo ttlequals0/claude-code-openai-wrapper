@@ -14,11 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-text parts are accepted and skipped, and the text inside a
   `tool_result` is kept. Ported from #41.
 
+### Changed
+
+- `claude-agent-sdk` pinned to 0.2.174 (bundled Claude CLI 2.1.310; parallel
+  tool calls no longer go missing from session messages). Folds the automated
+  bump PRs #57, #58 and #60.
+
 ### Security
 
 - `mcp` raised to 1.30.0 for GHSA-84m7-p3x7-pcfv (unbounded session
-  accumulation in the StreamableHTTP transport). `anyio`, `pyjwt` and
-  `urllib3` moved to their current releases in the same lock refresh.
+  accumulation in the StreamableHTTP transport). `anyio`, `certifi`, `pyjwt`
+  and `urllib3` moved to their current releases in the same lock refresh,
+  which also covers Dependabot #59.
 
 ## [2.13.1] - 2026-10-10
 
