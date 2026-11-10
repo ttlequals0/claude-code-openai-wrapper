@@ -102,6 +102,11 @@ _DEFAULT_MODEL_META = {
 }
 
 _MODEL_OVERRIDES = {
+    "claude-fable-5-2": {
+        "context_window": 1_000_000,
+        "default_max_output": 64_000,
+        "max_output_limit": 128_000,
+    },
     "claude-fable-5-1": {
         "context_window": 1_000_000,
         "default_max_output": 64_000,
@@ -161,6 +166,7 @@ _MODEL_OVERRIDES = {
 # rebuilding the image via CLAUDE_MODELS_OVERRIDE=model-a,model-b.
 # NOTE: Claude Agent SDK only supports Claude 4+ models, not Claude 3.x.
 _ALL_MODEL_IDS = [
+    "claude-fable-5-2",
     "claude-fable-5-1",
     "claude-opus-5-5",
     "claude-sonnet-5-5",
@@ -222,8 +228,9 @@ _PRICING_SONNET = {"input": 3.0, "output": 15.0, "cache_read": 0.30, "cache_writ
 _PRICING_OPUS = {"input": 5.0, "output": 25.0, "cache_read": 0.50, "cache_write": 6.25}
 _PRICING_HAIKU_45 = {"input": 1.0, "output": 5.0, "cache_read": 0.10, "cache_write": 1.25}
 _PRICING_FABLE = {"input": 10.0, "output": 50.0, "cache_read": 1.00, "cache_write": 12.50}
-# Newer tiers break the 0.1x cache-read ratio: Fable 5.1 is 0.025x, Opus 5.5 is 0.05x.
+# Newer tiers break the 0.1x cache-read ratio: Fable 5.1/5.2 are 0.025x, Opus 5.5 is 0.05x.
 _PRICING_FABLE_51 = {"input": 10.0, "output": 50.0, "cache_read": 0.25, "cache_write": 12.50}
+_PRICING_FABLE_52 = {"input": 8.0, "output": 40.0, "cache_read": 0.20, "cache_write": 10.0}
 _PRICING_OPUS_55 = {"input": 4.0, "output": 20.0, "cache_read": 0.20, "cache_write": 5.0}
 _PRICING_SONNET_5 = {"input": 2.0, "output": 10.0, "cache_read": 0.20, "cache_write": 2.50}
 _PRICING_SONNET_55 = {"input": 2.0, "output": 10.0, "cache_read": 0.10, "cache_write": 2.50}
@@ -231,6 +238,7 @@ _PRICING_SONNET_55 = {"input": 2.0, "output": 10.0, "cache_read": 0.10, "cache_w
 _PRICING_HAIKU_55 = {"input": 0.10, "output": 0.50, "cache_read": 0.01, "cache_write": 0.125}
 
 MODEL_PRICING = {
+    "claude-fable-5-2": _PRICING_FABLE_52,
     "claude-fable-5-1": _PRICING_FABLE_51,
     "claude-fable-5": _PRICING_FABLE,
     "claude-opus-5-5": _PRICING_OPUS_55,
@@ -263,7 +271,7 @@ MODEL_FALLBACK_MAP = {
 }
 
 # Effort levels supported by Claude API
-VALID_EFFORT_LEVELS = {"low", "medium", "high", "max"}
+VALID_EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
 
 # Thinking modes supported by Claude API
 VALID_THINKING_MODES = {"adaptive", "enabled", "disabled"}

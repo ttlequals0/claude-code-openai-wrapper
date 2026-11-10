@@ -125,7 +125,7 @@ docker run -d -p 8000:8000 \
 docker run -d -p 8000:8000 \
   -v ~/.claude:/root/.claude \
   --name claude-wrapper \
-  ttlequals0/claude-code-openai-wrapper:2.13.2
+  ttlequals0/claude-code-openai-wrapper:2.14.0
 
 # Or build locally (prod stage is the default target)
 docker build --platform linux/amd64 -t claude-wrapper:local .
@@ -287,7 +287,7 @@ Claude-specific options via HTTP headers:
 | `X-Claude-Max-Turns` | integer | Max conversation turns |
 | `X-Claude-Allowed-Tools` | comma-separated | Tools to allow |
 | `X-Claude-Permission-Mode` | `default`, `acceptEdits`, `bypassPermissions`, `plan` | Permission mode |
-| `X-Claude-Effort` | `low`, `medium`, `high`, `max` | Model effort level |
+| `X-Claude-Effort` | `low`, `medium`, `high`, `xhigh`, `max` | Model effort level |
 | `X-Claude-Thinking` | `adaptive`, `enabled`, `disabled` | Extended thinking mode |
 | `X-Claude-Max-Thinking-Tokens` | integer | Thinking token budget |
 | `X-Enable-Cache` | `true` / `1` / `yes` | Opt in to response cache on this request |
@@ -301,16 +301,17 @@ With `ANTHROPIC_API_KEY` set, `/v1/models` returns Anthropic's live catalogue (c
 ### Latest
 | Model | Context | Max Output | Input $/MTok | Output $/MTok |
 |-------|---------|-----------|-------------|--------------|
-| `claude-fable-5-1` | 1M | 128K | $10 | $50 |
+| `claude-fable-5-2` | 1M | 128K | $8 | $40 |
 | `claude-opus-5-5` | 1M | 128K | $4 | $20 |
 | `claude-sonnet-5-5` (static fallback) | 1M | 128K | $2 | $10 |
 | `claude-haiku-5-5` | 1M | 128K | $0.10 | $0.50 |
 
-Cache reads are 0.1x input except Fable 5.1 (0.025x, $0.25/MTok), Opus 5.5 (0.05x, $0.20/MTok), and Sonnet 5.5 (0.05x, $0.10/MTok). Haiku 5.5 prompts over 100K tokens bill at 5x the listed rate ($0.50/$2.50, cache read $0.05, cache write $0.625); the cost tracker uses the base tier.
+Cache reads are 0.1x input except Fable 5.2 (0.025x, $0.20/MTok), Fable 5.1 (0.025x, $0.25/MTok), Opus 5.5 (0.05x, $0.20/MTok), and Sonnet 5.5 (0.05x, $0.10/MTok). Haiku 5.5 prompts over 100K tokens bill at 5x the listed rate ($0.50/$2.50, cache read $0.05, cache write $0.625); the cost tracker uses the base tier.
 
 ### Legacy (active, consider migrating)
 | Model | Context | Max Output | Input $/MTok | Output $/MTok |
 |-------|---------|-----------|-------------|--------------|
+| `claude-fable-5-1` | 1M | 128K | $10 | $50 |
 | `claude-fable-5` | 1M | 128K | $10 | $50 |
 | `claude-opus-5` | 1M | 128K | $5 | $25 |
 | `claude-opus-4-8` | 1M | 128K | $5 | $25 |
@@ -408,7 +409,7 @@ See `examples/session_continuity.py` for Python and curl examples.
 
 ## Function Calling
 
-Pass OpenAI-format tool definitions. The wrapper injects them into Claude's system prompt and parses structured responses back into `tool_calls` format.
+Pass OpenAI-format tool definitions. The wrapper injects them into Claude's system prompt and parses structured responses back into `tool_calls` format. Streamed tool calls carry an `index` and the stream ends with `finish_reason: "tool_calls"`.
 
 ```python
 response = client.chat.completions.create(

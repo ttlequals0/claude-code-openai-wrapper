@@ -13,13 +13,14 @@ class TestSystemPromptFormats:
     """Test that system prompt formats work correctly with new SDK."""
 
     def test_text_system_prompt_format(self):
-        """Test text-based system prompt format."""
-        options = ClaudeAgentOptions(
-            max_turns=1, system_prompt={"type": "text", "text": "You are a helpful assistant."}
-        )
-        assert options.system_prompt is not None
-        assert isinstance(options.system_prompt, dict)
-        assert options.system_prompt["type"] == "text"
+        """A custom system prompt is a plain string and must reach the CLI."""
+        from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
+
+        options = ClaudeAgentOptions(max_turns=1, system_prompt="You are a helpful assistant.")
+        transport = SubprocessCLITransport(prompt="hi", options=options)
+        transport._cli_path = "claude"
+        cmd = transport._build_command()
+        assert cmd[cmd.index("--system-prompt") + 1] == "You are a helpful assistant."
 
     def test_preset_system_prompt_format(self):
         """Test preset-based system prompt format."""

@@ -5,6 +5,58 @@ All notable changes to the Claude Code OpenAI Wrapper project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.0] - 2026-11-10
+
+### Added
+
+- `claude-fable-5-2` (Fable 5.2): 1M context, 128K max output, $8/$40 per
+  MTok, cache read $0.20, cache write $10. It leads the static model list;
+  Fable 5.1 moves to Legacy in the README.
+- `xhigh` is accepted as an effort level (`X-Claude-Effort`).
+
+### Fixed
+
+- A client's system message now reaches the model. `run_completion` passed
+  it as a `{"type": "text"}` dict, a shape the Agent SDK turns into no CLI
+  flag, so every request ran on Claude Code's default prompt instead. It is
+  now passed as a plain string and replaces that prompt. Requests without a
+  system message still use the `claude_code` preset. Reported upstream as
+  RichardAtCT#54; fix ported from the eddikh-ai fork.
+- Streamed tool calls are valid for OpenAI clients: each delta carries an
+  `index` and the stream ends with `finish_reason: "tool_calls"`. Ported
+  from the eddikh-ai fork.
+- Tool calls Claude writes in its native `<invoke>` markup are parsed into
+  `tool_calls` when they name a function the client defined. Ported from
+  the eddikh-ai fork.
+- With tools disabled, the CLI now starts with no built-in tools
+  (`--tools ""`) and loads no user or project settings
+  (`--setting-sources=`). The denylist alone missed tools added by newer
+  CLI releases, and the settings in a mounted `~/.claude` (plugins, MCP
+  tool definitions, memory files) were sent with every request. Measured
+  on a development machine with Haiku 5.5: 107,079 input tokens and
+  $0.0156 per one-word reply before, 572 tokens and $0.0002 after.
+  Requests with `enable_tools=true` still load settings. Based on the
+  eddikh-ai fork.
+
+### Changed
+
+- `claude-agent-sdk` pinned to 0.2.180 (bundled Claude CLI 2.1.321). Folds
+  the automated bump PRs #63 and #64.
+- The `completion_result` log line reports `failed=False` instead of
+  `is_error=False`, so log pipelines that match on "error" stop tagging
+  successful completions as errors.
+
+### Security
+
+- `authlib` floor raised to 1.9.1 (locked 1.9.5) for eight advisories,
+  including GHSA-6v38-4h7w-rj9h (empty JWS signatures accepted, critical)
+  and GHSA-8m4g-j4wp-wgcg (empty HMAC key allows JWT forgery, high).
+- `opentelemetry-api` floor 1.45.1 (locked 1.45.2) for GHSA-xcq7-p3pf-p88h
+  and dev-only `black` 26.10.1 for GHSA-cg8m-r9f2-5wm2. Covers Dependabot
+  #62.
+- `joserfc` floor raised to 1.7.6 (locked 1.7.7 or 1.8.0 by Python version) for CVE-2026-119283 and
+  CVE-2026-119284, found by pip-audit.
+
 ## [2.13.2] - 2026-10-27
 
 ### Fixed
