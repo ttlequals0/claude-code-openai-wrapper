@@ -12,7 +12,7 @@ OpenAI API-compatible wrapper for Claude Code. Drop it in front of any OpenAI cl
 - **Retry, fallback and a circuit breaker.** Overloaded Opus requests fall back to Sonnet. Repeated upstream failures open a short-lived breaker instead of piling up.
 - **Cost tracking and per-request controls.** Usage is priced per model, and `X-Claude-*` headers set effort, thinking, turns, tools and permission mode.
 - **Auth options.** Claude CLI login, Anthropic API key, Bedrock or Vertex AI. Optional API key on the wrapper itself.
-- **Tools are off by default** for speed. Send `enable_tools: true` to turn them on.
+- **Tools are off by default** for speed. Send `enable_tools: true` to turn them on. With tools off, the CLI also skips user and project settings, so plugins and MCP servers in a mounted `~/.claude` are not loaded.
 
 Release notes live in [CHANGELOG.md](./CHANGELOG.md) and on the GitHub releases page.
 

@@ -54,8 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `opentelemetry-api` floor 1.45.1 (locked 1.45.2) for GHSA-xcq7-p3pf-p88h
   and dev-only `black` 26.10.1 for GHSA-cg8m-r9f2-5wm2. Covers Dependabot
   #62.
-- `joserfc` floor raised to 1.7.6 (locked 1.7.7 or 1.8.0 by Python version) for CVE-2026-119283 and
-  CVE-2026-119284, found by pip-audit.
+- `joserfc` floor raised to 1.7.6 (locked 1.7.7 or 1.8.0 by Python
+  version) for CVE-2026-119283 and CVE-2026-119284, found by pip-audit.
 
 ## [2.13.2] - 2026-10-27
 
