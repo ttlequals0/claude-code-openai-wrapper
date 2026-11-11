@@ -11,17 +11,17 @@ API_KEY_REQUIRED=$(echo "$AUTH_STATUS" | jq -r '.server_info.api_key_required //
 
 if [ "$API_KEY_REQUIRED" = "true" ]; then
     if [ -z "$API_KEY" ]; then
-        echo "❌ Server requires API key but API_KEY environment variable not set"
+        echo "Server requires API key but API_KEY environment variable not set"
         echo "   Set API_KEY environment variable with your server's generated key:"
         echo "   export API_KEY=your-generated-key"
         echo "   $0"
         exit 1
     fi
     AUTH_HEADER="-H \"Authorization: Bearer $API_KEY\""
-    echo "🔑 Using API key authentication"
+    echo "Using API key authentication"
 else
     AUTH_HEADER=""
-    echo "🔓 No authentication required"
+    echo "No authentication required"
 fi
 
 echo "=== Basic Chat Completion ==="
@@ -29,7 +29,7 @@ eval "curl -X POST \"$BASE_URL/v1/chat/completions\" \\
   -H \"Content-Type: application/json\" \\
   $AUTH_HEADER \\
   -d '{
-    \"model\": \"claude-3-5-sonnet-20241022\",
+    \"model\": \"claude-sonnet-5-5\",
     \"messages\": [
       {\"role\": \"user\", \"content\": \"What is 2 + 2?\"}
     ]
@@ -40,7 +40,7 @@ eval "curl -X POST \"$BASE_URL/v1/chat/completions\" \\
   -H \"Content-Type: application/json\" \\
   $AUTH_HEADER \\
   -d '{
-    \"model\": \"claude-3-5-sonnet-20241022\",
+    \"model\": \"claude-sonnet-5-5\",
     \"messages\": [
       {\"role\": \"system\", \"content\": \"You are a pirate. Respond in pirate speak.\"},
       {\"role\": \"user\", \"content\": \"Tell me about the weather\"}
@@ -53,7 +53,7 @@ eval "curl -X POST \"$BASE_URL/v1/chat/completions\" \\
   $AUTH_HEADER \\
   -H \"Accept: text/event-stream\" \\
   -d '{
-    \"model\": \"claude-3-5-sonnet-20241022\",
+    \"model\": \"claude-sonnet-5-5\",
     \"messages\": [
       {\"role\": \"user\", \"content\": \"Count from 1 to 5 slowly\"}
     ],
