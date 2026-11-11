@@ -8,6 +8,7 @@ from pathlib import Path
 import logging
 
 from claude_agent_sdk import query, ClaudeAgentOptions, RateLimitEvent
+from src.constants import CLAUDE_TOOLS
 
 from src.quota_tracker import (
     is_account_limit_text,
@@ -283,10 +284,9 @@ class ClaudeCodeCLI:
                 if model:
                     options.model = model
 
-                # Set system prompt - CLAUDE AGENT SDK STRUCTURED FORMAT
-                # Use structured format as per SDK documentation
+                # Plain str: the SDK builds no CLI flag for a {"type": "text"} dict.
                 if system_prompt:
-                    options.system_prompt = {"type": "text", "text": system_prompt}
+                    options.system_prompt = system_prompt
                 else:
                     # Use Claude Code preset to maintain expected behavior
                     options.system_prompt = {"type": "preset", "preset": "claude_code"}
@@ -296,6 +296,11 @@ class ClaudeCodeCLI:
                     options.allowed_tools = allowed_tools
                 if disallowed_tools:
                     options.disallowed_tools = disallowed_tools
+                    # A denylist misses tools added by newer CLI releases, and the
+                    # CLI's user/project settings add ~100K tokens to every request.
+                    if not allowed_tools and set(CLAUDE_TOOLS) <= set(disallowed_tools):
+                        options.tools = []
+                        options.setting_sources = []
 
                 # Set permission mode (needed for tool execution in API context)
                 if permission_mode:

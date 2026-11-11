@@ -214,3 +214,25 @@ class TestParseToolCallsEdgeCases:
         choice = {"type": "function", "function": {"name": "search"}}
         result = build_tools_system_prompt(SAMPLE_TOOLS, choice)
         assert "MUST call function search" in result
+
+
+class TestInvokeMarkupFallback:
+    def test_parses_invoke_for_defined_function(self):
+        text = (
+            'Checking.\n<function_calls>\n<invoke name="get_weather">\n'
+            '<parameter name="city">Paris</parameter>\n<parameter name="days">3</parameter>\n'
+            "</invoke>\n</function_calls>"
+        )
+        calls, remaining = parse_tool_calls(text, {"get_weather"})
+        assert calls == [{"name": "get_weather", "arguments": {"city": "Paris", "days": 3}}]
+        assert remaining == "Checking."
+
+    def test_ignores_undefined_function(self):
+        text = '<invoke name="Bash"><parameter name="command">ls</parameter></invoke>'
+        calls, remaining = parse_tool_calls(text, {"get_weather"})
+        assert calls == []
+        assert remaining == text
+
+    def test_no_tool_names_keeps_text(self):
+        text = '<invoke name="get_weather"><parameter name="city">Paris</parameter></invoke>'
+        assert parse_tool_calls(text) == ([], text)

@@ -33,12 +33,12 @@ def get_api_key(base_url: str = "http://localhost:8000") -> Optional[str]:
                 return "no-auth-required"
             else:
                 # Auth required but no key provided
-                print("⚠️  Server requires API key but none provided.")
+                print("Server requires API key but none provided.")
                 print("   Set API_KEY environment variable with your server's API key")
                 print("   Example: API_KEY=your-server-key python openai_sdk.py")
                 return None
     except Exception as e:
-        print(f"⚠️  Could not check server auth status: {e}")
+        print(f"Could not check server auth status: {e}")
         print("   Assuming no authentication required")
         
     return "fallback-key"
@@ -65,7 +65,7 @@ def basic_chat_example(client: OpenAI):
     print("=== Basic Chat Completion ===")
     
     response = client.chat.completions.create(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-sonnet-5-5",
         messages=[
             {"role": "user", "content": "What is the capital of France?"}
         ]
@@ -82,7 +82,7 @@ def system_message_example(client: OpenAI):
     print("=== Chat with System Message ===")
     
     response = client.chat.completions.create(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-sonnet-5-5",
         messages=[
             {"role": "system", "content": "You are a helpful coding assistant. Be concise."},
             {"role": "user", "content": "How do I read a file in Python?"}
@@ -104,7 +104,7 @@ def conversation_example(client: OpenAI):
     ]
     
     response = client.chat.completions.create(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-sonnet-5-5",
         messages=messages
     )
     
@@ -117,7 +117,7 @@ def streaming_example(client: OpenAI):
     print("=== Streaming Response ===")
     
     stream = client.chat.completions.create(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-sonnet-5-5",
         messages=[
             {"role": "user", "content": "Write a haiku about programming"}
         ],
@@ -136,7 +136,7 @@ def file_operation_example(client: OpenAI):
     print("=== File Operation Example ===")
     
     response = client.chat.completions.create(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-sonnet-5-5",
         messages=[
             {"role": "user", "content": "List the files in the current directory"}
         ]
@@ -151,7 +151,7 @@ def code_generation_example(client: OpenAI):
     print("=== Code Generation Example ===")
     
     response = client.chat.completions.create(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-sonnet-5-5",
         messages=[
             {"role": "user", "content": "Write a Python function that calculates fibonacci numbers"}
         ],
@@ -198,11 +198,11 @@ def main():
     api_key = get_api_key()
     if api_key:
         if api_key == "no-auth-required":
-            print("🔓 Server authentication: Not required")
+            print("Server authentication: Not required")
         else:
-            print("🔑 Server authentication: Required (using provided key)")
+            print("Server authentication: Required (using provided key)")
     else:
-        print("❌ Server authentication: Required but no key available")
+        print("Server authentication: Required but no key available")
         return
     
     print("="*50)

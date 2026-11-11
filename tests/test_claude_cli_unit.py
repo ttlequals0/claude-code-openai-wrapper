@@ -662,7 +662,40 @@ class TestClaudeCodeCLIRunCompletion:
 
             assert len(captured_options) == 1
             opts = captured_options[0]
-            assert opts.system_prompt == {"type": "text", "text": "You are helpful"}
+            assert opts.system_prompt == "You are helpful"
+
+            from claude_agent_sdk._internal.transport.subprocess_cli import (
+                SubprocessCLITransport,
+            )
+
+            transport = SubprocessCLITransport(prompt="Hello", options=opts)
+            transport._cli_path = "claude"
+            cmd = transport._build_command()
+            assert cmd[cmd.index("--system-prompt") + 1] == "You are helpful"
+
+    @pytest.mark.asyncio
+    async def test_run_completion_tools_disabled_gives_no_builtin_tools(self, cli_instance):
+        """Disallowing every known tool also empties the CLI's base tool set."""
+        from src.constants import CLAUDE_TOOLS, DEFAULT_DISALLOWED_TOOLS
+
+        captured_options = []
+
+        async def mock_query(prompt, options):
+            captured_options.append(options)
+            yield {"type": "assistant", "content": "Response"}
+
+        with patch("src.claude_cli.query", mock_query):
+            async for _ in cli_instance.run_completion("Hello", disallowed_tools=CLAUDE_TOOLS):
+                pass
+            async for _ in cli_instance.run_completion(
+                "Hello", disallowed_tools=DEFAULT_DISALLOWED_TOOLS
+            ):
+                pass
+
+        assert captured_options[0].tools == []
+        assert captured_options[0].setting_sources == []
+        assert captured_options[1].tools is None
+        assert captured_options[1].setting_sources is None
 
     @pytest.mark.asyncio
     async def test_run_completion_with_model(self, cli_instance):

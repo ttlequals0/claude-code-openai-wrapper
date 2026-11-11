@@ -58,6 +58,16 @@ class TestCalculateCost:
         cost = calculate_cost("claude-haiku-5-5", usage)
         assert cost == pytest.approx(0.10 + 0.50 + 0.01 + 0.125)
 
+    def test_fable_52_pricing(self):
+        usage = UsageRecord(
+            input_tokens=1_000_000,
+            output_tokens=1_000_000,
+            cache_read_tokens=1_000_000,
+            cache_creation_tokens=1_000_000,
+        )
+        cost = calculate_cost("claude-fable-5-2", usage)
+        assert cost == pytest.approx(8.0 + 40.0 + 0.20 + 10.0)
+
     def test_fable_51_pricing(self):
         usage = UsageRecord(
             input_tokens=1_000_000,

@@ -2,13 +2,10 @@ version: '3.8'
 services:
   claude-wrapper:
     image: ttlequals0/claude-code-openai-wrapper:latest
-    # Always pull a fresh :latest on stack redeploy so the Portainer
-    # webhook actually rolls forward. Without this, docker compose up
-    # reuses the locally cached :latest layer and the new image sits on
-    # Docker Hub unused.
+    # Pull :latest on every redeploy. Without this, docker compose up reuses
+    # the cached image and a redeploy webhook does not roll forward.
     pull_policy: always
-    # Build from local Dockerfile targeting the prod stage. Dev iteration
-    # should override with `target: dev` (or use `docker build --target dev`).
+    # Builds the prod stage. For development use `target: dev`.
     build:
       context: .
       target: prod
@@ -27,22 +24,19 @@ services:
       # Worker count for the prod image. Default 1: the quota tracker and
       # circuit breaker are in-process state, so >1 worker splits it.
       # - UVICORN_WORKERS=1
-      # Default max_turns when the caller does not enable_tools. Raising from
-      # the legacy 1 to 3 prevents error_max_turns on short prompts where the
-      # agent engages extended thinking and needs a second turn to emit the
-      # final message.
+      # max_turns when tools are off. Below 3, a prompt that uses extended
+      # thinking can end in error_max_turns.
       # - WRAPPER_DEFAULT_MAX_TURNS=3
-      # Opt-in: map OpenAI max_tokens to Claude max_thinking_tokens (legacy
-      # behavior; now off by default because it's a semantic mismatch).
+      # Map OpenAI max_tokens to Claude max_thinking_tokens (legacy, off by
+      # default).
       # - WRAPPER_MAP_MAX_TOKENS_TO_THINKING=false
       # Authentication (choose one method):
       # Option 1: Direct API key (recommended)
       # - ANTHROPIC_API_KEY=your-api-key
       # Option 2: Explicit auth method selection
       # - CLAUDE_AUTH_METHOD=cli  # Options: cli, api_key, bedrock, vertex
-      # Option 3: Subscription OAuth token, read by the bundled CLI. Passed
-      # through from the host so a subscription needs no API key. Unset when
-      # absent, which leaves auth detection on its default claude_cli path.
+      # Option 3: Subscription OAuth token, read by the bundled CLI and
+      # passed through from the host. Empty when the host has none.
       - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
       # Optional: Set Claude's working directory (defaults to isolated temp dir)
       # - CLAUDE_CWD=/workspace
